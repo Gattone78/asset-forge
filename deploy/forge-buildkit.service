@@ -1,0 +1,19 @@
+# Forge-dedicated BuildKit daemon. Keeps all build cache under /srv/forge (req §9);
+# the system buildkitd (used by big-cat) is untouched. OCI worker so nothing
+# lands in containerd until nerdctl loads the finished image.
+# Install (on gpu): sudo cp deploy/forge-buildkit.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now forge-buildkit
+# Use:     sudo env BUILDKIT_HOST=unix:///run/forge-buildkit/buildkitd.sock TMPDIR=/srv/forge/tmp nerdctl compose build
+[Unit]
+Description=BuildKit daemon for Asset Forge (cache on /srv/forge)
+After=network.target
+[Service]
+ExecStartPre=-/sbin/modprobe overlay
+ExecStartPre=/bin/mkdir -p /run/forge-buildkit /srv/forge/buildkit
+ExecStart=/usr/local/bin/buildkitd --root /srv/forge/buildkit --addr unix:///run/forge-buildkit/buildkitd.sock --oci-worker=true --containerd-worker=false
+Type=notify
+Delegate=yes
+KillMode=process
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
