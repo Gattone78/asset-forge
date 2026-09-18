@@ -1,7 +1,8 @@
 // ComfyUI client + container lifecycle. The container is the unload mechanism (req §3):
 // start on demand, stop after idle, and a stop only counts once nvidia-smi shows VRAM back at baseline.
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import WebSocket from "ws";
 import { config, paths } from "./config.ts";
@@ -55,8 +56,24 @@ export async function guardFreeVram(): Promise<void> {
   }
 }
 
+/** Host readiness gate (req §9): right after boot the driver and the CDI spec lag; never start comfyui
+ *  until nvidia-smi answers and /var/run/cdi/nvidia.yaml exists. */
+export async function waitForGpuHost(log: (m: string) => void, maxMs = 180_000): Promise<void> {
+  const t0 = Date.now();
+  let warned = false;
+  for (;;) {
+    let ok = false;
+    try { await execFileP("nvidia-smi", ["-L"], { timeout: 10_000 }); ok = existsSync("/var/run/cdi/nvidia.yaml"); } catch { ok = false; }
+    if (ok) { if (warned) log("GPU host ready"); return; }
+    if (Date.now() - t0 > maxMs) throw new Error("GPU host not ready (nvidia-smi / CDI spec) after " + maxMs / 1000 + "s");
+    if (!warned) { log("waiting for the host GPU driver and CDI spec (boot lag)"); warned = true; }
+    await sleep(3000);
+  }
+}
+
 export async function ensureUp(log: (m: string) => void): Promise<void> {
   if (await isUp()) return;
+  await waitForGpuHost(log);
   await guardFreeVram();
   log("starting comfyui container");
   const t0 = Date.now();
