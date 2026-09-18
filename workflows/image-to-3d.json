@@ -1,0 +1,520 @@
+{
+ "1": {
+  "class_type": "LoadBackgroundRemovalModel",
+  "_meta": {
+   "title": "Load BiRefNet"
+  },
+  "inputs": {
+   "bg_removal_name": "birefnet.safetensors"
+  }
+ },
+ "2": {
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "Reference image"
+  },
+  "inputs": {
+   "image": "jobs/unset/ref-front.png"
+  }
+ },
+ "3": {
+  "class_type": "RemoveBackground",
+  "_meta": {
+   "title": "Subject mask"
+  },
+  "inputs": {
+   "bg_removal_model": [
+    "1",
+    0
+   ],
+   "image": [
+    "2",
+    0
+   ]
+  }
+ },
+ "4": {
+  "class_type": "ImageCropToMask",
+  "_meta": {
+   "title": "Crop to subject"
+  },
+  "inputs": {
+   "images": [
+    "2",
+    0
+   ],
+   "masks": [
+    "3",
+    0
+   ],
+   "width": 1024,
+   "height": 1024,
+   "pad_factor": 1.0,
+   "grow_mask": 0,
+   "background": "#000000"
+  }
+ },
+ "5": {
+  "class_type": "CLIPVisionLoader",
+  "_meta": {
+   "title": "Load DINOv3 (NAF)"
+  },
+  "inputs": {
+   "clip_name": "dino_v3_L_naf_fp32.safetensors"
+  }
+ },
+ "6": {
+  "class_type": "Trellis2Conditioning",
+  "_meta": {
+   "title": "TRELLIS.2 conditioning"
+  },
+  "inputs": {
+   "clip_vision_model": [
+    "5",
+    0
+   ],
+   "image": [
+    "4",
+    0
+   ]
+  }
+ },
+ "7": {
+  "class_type": "UNETLoader",
+  "_meta": {
+   "title": "Load TRELLIS.2 (bf16)"
+  },
+  "inputs": {
+   "unet_name": "trellis_2_bf16.safetensors",
+   "weight_dtype": "default"
+  }
+ },
+ "8": {
+  "class_type": "CFGOverride",
+  "_meta": {
+   "title": "Structure: CFG override"
+  },
+  "inputs": {
+   "model": [
+    "7",
+    0
+   ],
+   "cfg": 1.0,
+   "start_percent": 0.667,
+   "end_percent": 1.0
+  }
+ },
+ "9": {
+  "class_type": "RescaleCFG",
+  "_meta": {
+   "title": "Structure: rescale CFG"
+  },
+  "inputs": {
+   "model": [
+    "8",
+    0
+   ],
+   "multiplier": 0.7
+  }
+ },
+ "10": {
+  "class_type": "ModelSamplingSD3",
+  "_meta": {
+   "title": "Structure: shift"
+  },
+  "inputs": {
+   "model": [
+    "9",
+    0
+   ],
+   "shift": 5.0
+  }
+ },
+ "11": {
+  "class_type": "EmptyTrellis2LatentStructure",
+  "_meta": {
+   "title": "Empty structure latent"
+  },
+  "inputs": {
+   "batch_size": 1
+  }
+ },
+ "12": {
+  "class_type": "KSampler",
+  "_meta": {
+   "title": "Structure sampler"
+  },
+  "inputs": {
+   "model": [
+    "10",
+    0
+   ],
+   "positive": [
+    "6",
+    0
+   ],
+   "negative": [
+    "6",
+    1
+   ],
+   "latent_image": [
+    "11",
+    0
+   ],
+   "seed": 1,
+   "steps": 12,
+   "cfg": 7.5,
+   "sampler_name": "euler",
+   "scheduler": "normal",
+   "denoise": 1.0
+  }
+ },
+ "13": {
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "Load shape VAE"
+  },
+  "inputs": {
+   "vae_name": "trellis_2_shape_vae_bf16.safetensors"
+  }
+ },
+ "14": {
+  "class_type": "VaeDecodeStructureTrellis2",
+  "_meta": {
+   "title": "Decode structure -> voxel"
+  },
+  "inputs": {
+   "samples": [
+    "12",
+    0
+   ],
+   "vae": [
+    "13",
+    0
+   ],
+   "resolution": "32"
+  }
+ },
+ "15": {
+  "class_type": "Trellis2ShapeStage",
+  "_meta": {
+   "title": "Shape stage"
+  },
+  "inputs": {
+   "positive": [
+    "6",
+    0
+   ],
+   "negative": [
+    "6",
+    1
+   ],
+   "voxel": [
+    "14",
+    0
+   ]
+  }
+ },
+ "16": {
+  "class_type": "CFGOverride",
+  "_meta": {
+   "title": "Shape: CFG override"
+  },
+  "inputs": {
+   "model": [
+    "7",
+    0
+   ],
+   "cfg": 1.0,
+   "start_percent": 0.769,
+   "end_percent": 1.0
+  }
+ },
+ "17": {
+  "class_type": "RescaleCFG",
+  "_meta": {
+   "title": "Shape: rescale CFG"
+  },
+  "inputs": {
+   "model": [
+    "16",
+    0
+   ],
+   "multiplier": 0.5
+  }
+ },
+ "18": {
+  "class_type": "KSampler",
+  "_meta": {
+   "title": "Shape sampler"
+  },
+  "inputs": {
+   "model": [
+    "17",
+    0
+   ],
+   "positive": [
+    "15",
+    0
+   ],
+   "negative": [
+    "15",
+    1
+   ],
+   "latent_image": [
+    "15",
+    2
+   ],
+   "seed": 1,
+   "steps": 20,
+   "cfg": 7.5,
+   "sampler_name": "euler",
+   "scheduler": "normal",
+   "denoise": 1.0
+  }
+ },
+ "19": {
+  "class_type": "Trellis2UpsampleStage",
+  "_meta": {
+   "title": "Upsample stage"
+  },
+  "inputs": {
+   "positive": [
+    "15",
+    0
+   ],
+   "negative": [
+    "15",
+    1
+   ],
+   "shape_latent": [
+    "18",
+    0
+   ],
+   "vae": [
+    "13",
+    0
+   ],
+   "target_resolution": 1024
+  }
+ },
+ "20": {
+  "class_type": "KSampler",
+  "_meta": {
+   "title": "Upsampled shape sampler"
+  },
+  "inputs": {
+   "model": [
+    "17",
+    0
+   ],
+   "positive": [
+    "19",
+    0
+   ],
+   "negative": [
+    "19",
+    1
+   ],
+   "latent_image": [
+    "19",
+    2
+   ],
+   "seed": 1,
+   "steps": 12,
+   "cfg": 7.5,
+   "sampler_name": "euler",
+   "scheduler": "simple",
+   "denoise": 1.0
+  }
+ },
+ "21": {
+  "class_type": "VaeDecodeShapeTrellis",
+  "_meta": {
+   "title": "Decode shape -> mesh"
+  },
+  "inputs": {
+   "samples": [
+    "20",
+    0
+   ],
+   "vae": [
+    "13",
+    0
+   ]
+  }
+ },
+ "22": {
+  "class_type": "Trellis2TextureStage",
+  "_meta": {
+   "title": "Texture stage"
+  },
+  "inputs": {
+   "positive": [
+    "19",
+    0
+   ],
+   "negative": [
+    "19",
+    1
+   ],
+   "shape_latent": [
+    "20",
+    0
+   ]
+  }
+ },
+ "23": {
+  "class_type": "KSampler",
+  "_meta": {
+   "title": "Texture sampler"
+  },
+  "inputs": {
+   "model": [
+    "7",
+    0
+   ],
+   "positive": [
+    "22",
+    0
+   ],
+   "negative": [
+    "22",
+    1
+   ],
+   "latent_image": [
+    "22",
+    2
+   ],
+   "seed": 1,
+   "steps": 12,
+   "cfg": 1.0,
+   "sampler_name": "euler",
+   "scheduler": "normal",
+   "denoise": 1.0
+  }
+ },
+ "24": {
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "Load texture VAE"
+  },
+  "inputs": {
+   "vae_name": "trellis_2_texture_vae_bf16.safetensors"
+  }
+ },
+ "25": {
+  "class_type": "VaeDecodeTextureTrellis",
+  "_meta": {
+   "title": "Decode texture -> voxel colors"
+  },
+  "inputs": {
+   "samples": [
+    "23",
+    0
+   ],
+   "vae": [
+    "24",
+    0
+   ],
+   "shape_subdivides": [
+    "21",
+    1
+   ]
+  }
+ },
+ "27": {
+  "class_type": "SaveGLB",
+  "_meta": {
+   "title": "Save raw"
+  },
+  "inputs": {
+   "mesh": [
+    "21",
+    0
+   ],
+   "filename_prefix": "jobs/unset/raw/raw"
+  }
+ },
+ "28": {
+  "class_type": "PaintMesh",
+  "_meta": {
+   "title": "Vertex-paint from voxel colors"
+  },
+  "inputs": {
+   "mesh": [
+    "21",
+    0
+   ],
+   "voxel_colors": [
+    "25",
+    0
+   ]
+  }
+ },
+ "29": {
+  "class_type": "SaveGLB",
+  "_meta": {
+   "title": "Save painted"
+  },
+  "inputs": {
+   "mesh": [
+    "28",
+    0
+   ],
+   "filename_prefix": "jobs/unset/raw/painted"
+  }
+ },
+ "30": {
+  "class_type": "RemeshMesh",
+  "_meta": {
+   "title": "DC remesh (watertight)"
+  },
+  "inputs": {
+   "mesh": [
+    "21",
+    0
+   ],
+   "resolution": 512,
+   "sign_mode": "udf",
+   "sign_mode.qef": false,
+   "sign_mode.drop_inverted_components": false,
+   "sign_mode.drop_enclosed_components": false,
+   "band": 1.0,
+   "project_back": 0.0,
+   "fix_poles": false,
+   "smooth_iters": 0,
+   "drop_small_components": 0.01,
+   "precluster_max_verts": 20000000
+  }
+ },
+ "37": {
+  "class_type": "PaintMesh",
+  "_meta": {
+   "title": "Vertex-paint remeshed"
+  },
+  "inputs": {
+   "mesh": [
+    "30",
+    0
+   ],
+   "voxel_colors": [
+    "25",
+    0
+   ]
+  }
+ },
+ "38": {
+  "class_type": "SaveGLB",
+  "_meta": {
+   "title": "Save remeshed painted"
+  },
+  "inputs": {
+   "mesh": [
+    "37",
+    0
+   ],
+   "filename_prefix": "jobs/unset/raw/remeshed-painted"
+  }
+ }
+}

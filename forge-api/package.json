@@ -1,0 +1,19 @@
+{
+  "name": "forge-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Asset Forge API: Fastify + SQLite job queue + single worker driving ComfyUI and svc-post",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "start": "node src/server.ts",
+    "check": "node --check src/server.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.2.0",
+    "fastify": "^5.6.0",
+    "sharp": "^0.34.3",
+    "ws": "^8.18.3",
+    "yaml": "^2.8.1"
+  }
+}

@@ -256,8 +256,11 @@ def mesh_stats(obj):
     m = obj.data
     m.calc_loop_triangles()
     lo, hi = world_bbox(obj)
+    # Report the bbox in glTF axes (Y-up, -Z forward): Blender (x, y, z) -> glTF (x, z, -y).
+    gmin = [round(lo.x, 4), round(lo.z, 4), round(-hi.y, 4)]
+    gmax = [round(hi.x, 4), round(hi.z, 4), round(-lo.y, 4)]
     return {"tris": len(m.loop_triangles), "verts": len(m.vertices), "faces": len(m.polygons),
-            "bbox_min": [round(v, 4) for v in lo], "bbox_max": [round(v, 4) for v in hi],
+            "bbox_min": gmin, "bbox_max": gmax,
             "height_m": round(hi.z - lo.z, 4), "has_uv": bool(m.uv_layers), "color_attr": color_attr_name(m)}
 
 

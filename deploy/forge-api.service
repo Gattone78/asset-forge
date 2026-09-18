@@ -1,0 +1,20 @@
+# forge-api on the VM host (hqadmin), started at boot. comfyui is NEVER started at boot (req §9);
+# forge-api starts it on demand when a job needs the GPU.
+# Install (on gpu): sudo cp deploy/forge-api.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now forge-api
+[Unit]
+Description=Asset Forge API (job queue + worker)
+After=network-online.target containerd.service
+Wants=network-online.target
+
+[Service]
+User=hqadmin
+Group=hqadmin
+WorkingDirectory=/srv/forge/src/asset-forge/forge-api
+EnvironmentFile=-/srv/forge/.env
+Environment=PATH=/srv/forge/tools/node/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/srv/forge/tools/node/bin/node src/server.ts
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
