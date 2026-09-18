@@ -1,0 +1,9 @@
+{
+  "name": "forge-svc-post",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Asset Forge post stage: decimate (gltf-transform), normalize/bake/thumbnail/FBX (Blender), meshopt, sidecar",
+  "bin": { "forge-post": "./post.mjs" },
+  "engines": { "node": ">=22" }
+}

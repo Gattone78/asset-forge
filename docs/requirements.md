@@ -20,7 +20,7 @@ This document supersedes the earlier Asset Forge requirements (ComfyUI-based). N
 | Tooling | Plain scripts + `nerdctl compose`. Idempotent where cheap, but do not build a framework. |
 | Repo | `github.com/Gattone78/asset-forge` (personal account, SSH alias per existing multi-account config). |
 | Interfaces | CLI, REST API, web review UI. Async job queue with status. MCP server is a later phase. |
-| Models | Open-weight, all local. TRELLIS.2 (image→3D), FLUX.1 schnell (text→image), UniRig (auto-rig). Hunyuan3D 2.x as fallback only if TRELLIS.2 fails Blackwell verification. |
+| Models | Open-weight, all local. TRELLIS.2 (image→3D, **via ComfyUI core** — merged upstream Aug 2026 as pure PyTorch, no CUDA extensions; community wrappers rejected, see phase-1.md), FLUX.1 schnell (text→image, via the Comfy-Org mirror since the BFL repo is HF-gated), UniRig (auto-rig, via comfy-env isolated env at `/srv/forge/comfy/ce`). All three passed the Blackwell gates in Phase 1. Hunyuan3D fallback no longer needed. |
 | GPU host | **ComfyUI** runs all GPU models as a single on-demand container. Workflows are committed JSON files; `forge-api` submits them via ComfyUI's HTTP/WebSocket API. Standalone FastAPI wrappers are the fallback only for a model with no working Blackwell-compatible ComfyUI node. |
 | Licensing | Hobby use only; no license gating required. Record the model license in each sidecar anyway. |
 | Meadowbots asset budget | 5–20k tris, 2k textures max, flat-shaded with a simple albedo texture. Full PBR available as a profile option for other games. |
@@ -254,6 +254,12 @@ Build the `comfyui` container (pinned ComfyUI commit, Blackwell-compatible torch
 **Accept:** `docs/phase-1.md` records pass/fail, versions, build flags, and timings for each model. Nothing downstream starts until the 3D model passes.
 
 ### Phase 2 — Prompt → GLB creature, end to end (first deliverable)
+
+Facts from Phase 1 that Phase 2 must build on (details in `docs/phase-1.md`):
+- Warm timings: FLUX ~2 s/image, TRELLIS.2 ~26 s at 1024, UniRig ~16 s; cold starts 14–62 s. Peak VRAM: FLUX 35.8 GB, TRELLIS.2 ~19 GB, UniRig 5.4 GB.
+- `comfyui` needs ~10 s to stop (SIGKILL after grace); `forge-api` budgets for it and treats a stop as complete only when `nvidia-smi` shows Forge VRAM at ~0.
+- Raw TRELLIS.2 output is ~14 M tris; the in-graph DC remesh gives ~5.7 M with few boundary edges, but the in-graph midpoint decimator opens ~2% boundary edges. The post stage must compare in-graph decimation vs `gltf-transform simplify` (weld → simplify → check boundary edges and visual result) on 3 sample meshes and pick the pipeline that reaches the profile budget with the fewest holes. Record the choice.
+- Verify `forge-buildkit.service` keeps its cache under `/srv/forge`; the Phase 1 root-disk swing (46→104 GB) suggests it may not.
 
 - `forge-api` with SQLite queue and worker loop; ComfyUI workflow submission (`image-refs.json`, `image-to-3d.json`); `svc-post`; on-demand `comfyui` start/stop; `meadowbots-flat` profile; `forge` CLI.
 - Post stage: normalize, bake-to-albedo, decimate, meshopt, FBX export, sidecar, thumbnail.

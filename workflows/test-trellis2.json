@@ -584,5 +584,34 @@
    ],
    "filename_prefix": "phase1/test-trellis2-remeshed"
   }
+ },
+ "37": {
+  "class_type": "PaintMesh",
+  "_meta": {
+   "title": "Vertex-paint remeshed"
+  },
+  "inputs": {
+   "mesh": [
+    "30",
+    0
+   ],
+   "voxel_colors": [
+    "25",
+    0
+   ]
+  }
+ },
+ "38": {
+  "class_type": "SaveGLB",
+  "_meta": {
+   "title": "Save remeshed+painted GLB"
+  },
+  "inputs": {
+   "mesh": [
+    "37",
+    0
+   ],
+   "filename_prefix": "phase1/test-trellis2-remeshed-painted"
+  }
  }
 }

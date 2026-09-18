@@ -1,6 +1,6 @@
 # Asset Forge — nerdctl compose (rootful: `sudo nerdctl compose ...`).
-# Phase 1: only the comfyui service. forge-api / forge-ui / svc-post arrive in Phase 2.
 # comfyui is on-demand: never `restart: always`, never started at boot (req §9).
+# svc-post runs per job and exits: `sudo nerdctl compose run --rm svc-post --in ... --out-dir ...`.
 name: forge
 
 services:
@@ -31,3 +31,15 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  svc-post:
+    build:
+      context: ./svc-post
+      dockerfile: Dockerfile
+    image: forge/svc-post:0.1.0
+    restart: "no"
+    profiles: ["tools"]
+    user: "1000:1000"
+    volumes:
+      - ${FORGE_DATA:-/srv/forge}:/srv/forge
+    working_dir: /srv/forge
