@@ -2,13 +2,14 @@
 # Asset Forge — comfyui service image.
 # Pinned: ComfyUI v0.36.0 (commit below), torch 2.14.0+cu130 (Blackwell sm_120, driver 580.x / CUDA 13.0).
 # TRELLIS.2 is native in ComfyUI core since PR #14718 (2026-08-22): pure PyTorch, no CUDA extensions to build.
-# Custom nodes (if any) are pinned to commits here; there is no ComfyUI-Manager and no auto-update.
+# Custom nodes are pinned to commits here; there is no ComfyUI-Manager and no auto-update.
 ARG CUDA_BASE=nvidia/cuda:13.0.3-base-ubuntu24.04
 FROM ${CUDA_BASE}
 
 ARG COMFYUI_COMMIT=ee71d5c4993f29086b27fde1629a945ae48425bf
 ARG TORCH_VERSION=2.14.0
 ARG TORCH_INDEX=https://download.pytorch.org/whl/cu130
+ARG UNIRIG_COMMIT=69ee59dc459d2da7cb0291930c1f944886c31d7c
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -40,17 +41,27 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /opt/ComfyUI/requirements.txt && \
     pip install trimesh   # for mesh assertions in Phase 1 test scripts
 
-# Record resolved versions for docs/phase-1.md
-RUN pip freeze | grep -iE "^(torch|torchvision|torchaudio|comfyui-frontend-package|comfyui-workflow-templates|numpy|transformers|safetensors|trimesh)=" > /opt/ComfyUI/.forge-versions
+# UniRig auto-rig node, pinned. Its heavy deps (bpy, spconv, flash-attn, torch-scatter) live in a
+# comfy-env / pixi isolated environment created at first run under $COMFY_ENV_ROOT, which is a
+# /srv/forge bind mount so the multi-GB env is persistent and off the root disk. See docs/phase-1.md.
+RUN git clone -q https://github.com/PozzettiAndrea/ComfyUI-UniRig.git /opt/ComfyUI/custom_nodes/ComfyUI-UniRig && \
+    cd /opt/ComfyUI/custom_nodes/ComfyUI-UniRig && git checkout -q "${UNIRIG_COMMIT}" && \
+    git rev-parse HEAD > .forge-commit
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /opt/ComfyUI/custom_nodes/ComfyUI-UniRig/requirements.txt
 
-RUN mkdir -p /opt/ComfyUI/models /opt/ComfyUI/output /opt/ComfyUI/input /opt/ComfyUI/temp /opt/ComfyUI/user && \
+# Record resolved versions for docs/phase-1.md
+RUN pip freeze | grep -iE "^(torch|torchvision|torchaudio|comfyui-frontend-package|comfyui-workflow-templates|numpy|transformers|safetensors|trimesh|comfy-env|comfy-3d-viewers)=" > /opt/ComfyUI/.forge-versions
+
+RUN mkdir -p /opt/ComfyUI/models /opt/ComfyUI/output /opt/ComfyUI/input /opt/ComfyUI/temp /opt/ComfyUI/user /opt/ComfyUI/ce && \
     chown -R comfy:comfy /opt/ComfyUI
 USER comfy
 WORKDIR /opt/ComfyUI
 
-# HF cache lives on the models bind mount (/srv/forge/models/hf on the host).
+# HF cache lives on the models bind mount (/srv/forge/models/hf on the host); comfy-env root likewise.
 ENV HF_HOME=/opt/ComfyUI/models/hf \
-    HF_HUB_DISABLE_TELEMETRY=1
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    COMFY_ENV_ROOT=/opt/ComfyUI/ce
 
 EXPOSE 8188
 CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--disable-auto-launch"]

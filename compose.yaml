@@ -15,12 +15,14 @@ services:
     environment:
       - HF_HOME=/opt/ComfyUI/models/hf
       - HF_TOKEN=${HF_TOKEN:-}
+      - COMFY_ENV_ROOT=/opt/ComfyUI/ce
     volumes:
       - ${FORGE_DATA:-/srv/forge}/models:/opt/ComfyUI/models
       - ${FORGE_DATA:-/srv/forge}/comfy/output:/opt/ComfyUI/output
       - ${FORGE_DATA:-/srv/forge}/comfy/input:/opt/ComfyUI/input
       - ${FORGE_DATA:-/srv/forge}/comfy/temp:/opt/ComfyUI/temp
       - ${FORGE_DATA:-/srv/forge}/comfy/user:/opt/ComfyUI/user
+      - ${FORGE_DATA:-/srv/forge}/comfy/ce:/opt/ComfyUI/ce
     shm_size: 8g
     deploy:
       resources:

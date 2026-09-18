@@ -1,0 +1,11 @@
+{
+  "1": {"class_type": "UniRigLoadMesh", "_meta": {"title": "Load giraffe.glb"},
+        "inputs": {"source_folder": "input", "file_path": "giraffe.glb"}},
+  "2": {"class_type": "UniRigLoadModel", "_meta": {"title": "Load UniRig model"},
+        "inputs": {"precision": "auto", "attn_backend": "auto"}},
+  "3": {"class_type": "UniRigAutoRig", "_meta": {"title": "Auto rig (articulationxl)"},
+        "inputs": {"trimesh": ["1", 0], "model": ["2", 0], "skeleton_template": "articulationxl",
+                   "fbx_name": "phase1-giraffe-rigged", "target_face_count": 50000, "debug": false}},
+  "4": {"class_type": "UniRigPreviewRiggedMesh", "_meta": {"title": "Preview rigged mesh"},
+        "inputs": {"fbx_output_path": ["3", 0]}}
+}
