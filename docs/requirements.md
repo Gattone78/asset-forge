@@ -15,9 +15,9 @@ This document supersedes the earlier Asset Forge requirements (ComfyUI-based). N
 | v1 media types | 3D models (text→image→3D), 2D images/textures/sprites, auto-rigging. Video (trailers/promo clips) is Phase 6. Audio is a later phase. |
 | Generation model | **Batch at build time.** Jobs produce candidate assets; Phil reviews and downloads keepers. No runtime generation in v1. |
 | Determinism | Every job records seeds. Every job inherits a per-game **style profile**. Re-running a job with the same inputs must reproduce the same output. |
-| Host | Existing `k8s-gpu-1` VM (Ubuntu 24.04, RTX PRO 6000 Blackwell Max-Q via PCIe passthrough). **Docker Compose**, not Kubernetes. Kubernetes stays shut down while Forge runs. |
-| Noise | GPU fan noise during jobs is fine. **Idle must be quiet:** model services load on demand and unload after an idle timeout. Nothing holds the GPU at rest. |
-| Tooling | Plain scripts + `docker compose`. Idempotent where cheap, but do not build a framework. |
+| Host | Existing `k8s-gpu-1` VM (Ubuntu 24.04, RTX PRO 6000 Blackwell Max-Q via PCIe passthrough). **containerd + nerdctl compose** — the runtime already on the VM. Docker CE is **not** to be installed (its `containerd.io` package can conflict with the existing containerd and take down the other workloads on the box). Kubernetes stays shut down while Forge runs. |
+| Noise | GPU fan noise during jobs is fine. **Idle must be quiet:** the `comfyui` container stops after an idle timeout; nothing of Forge's holds the GPU at rest. (The unrelated `big-cat` stack on the same VM is Phil's to start/stop and is outside Forge's control.) |
+| Tooling | Plain scripts + `nerdctl compose`. Idempotent where cheap, but do not build a framework. |
 | Repo | `github.com/Gattone78/asset-forge` (personal account, SSH alias per existing multi-account config). |
 | Interfaces | CLI, REST API, web review UI. Async job queue with status. MCP server is a later phase. |
 | Models | Open-weight, all local. TRELLIS.2 (image→3D), FLUX.1 schnell (text→image), UniRig (auto-rig). Hunyuan3D 2.x as fallback only if TRELLIS.2 fails Blackwell verification. |
@@ -40,20 +40,21 @@ Claude Code operates from the workstation over SSH. Two targets:
 | Target | Role | Use for |
 |---|---|---|
 | Proxmox host | Hypervisor | Adding the data disk to the VM (`qm`). Nothing else. |
-| `k8s-gpu-1` VM | GPU worker | Everything else: Docker, models, services, storage. |
+| `k8s-gpu-1` VM | GPU worker | Everything else: containers (nerdctl), models, services, storage. |
 
 **Discover, don't assume.** Before any change, verify and record in `docs/environment.md`:
 
-- SSH hostnames/IPs. The GPU VM's Proxmox VMID is **102** (verify with `qm list` on the host before any `qm` command).
-- `nvidia-smi` driver version, CUDA version reported, GPU name. **GPU passthrough to VM 102 is already verified working (Phil, Sep 2026)** — do not troubleshoot passthrough or touch Proxmox PCI config; only verify the driver/CUDA/Docker layers inside the VM.
-- Docker version, `nvidia-container-toolkit` present, `docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi` succeeds.
+- SSH targets: the GPU VM is `ssh gpu`, the Proxmox host is `ssh pve` (aliases in Phil's `~/.ssh/config`, key-based, both verified). The GPU VM's Proxmox VMID is **102** (verify with `qm list` on the host before any `qm` command).
+- `nvidia-smi` driver version, CUDA version reported, GPU name. Known as of Phase 0: driver 580.126.09, CUDA 13.0. **GPU passthrough to VM 102 is already verified working (Phil, Sep 2026)** — do not troubleshoot passthrough or touch Proxmox PCI config; only verify the driver/CUDA/container layers inside the VM.
+- Container runtime: containerd 2.3.3 + nerdctl 2.3.5 + NVIDIA Container Toolkit 1.19.0 (known as of Phase 0). Verify with `sudo nerdctl run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi`. Use rootful nerdctl (sudo); `hqadmin` has passwordless sudo.
+- Other workloads on the VM: the `big-cat` voice stack (vLLM, speaches STT, Chatterbox TTS) runs as nerdctl containers with restart-unless-stopped and holds a large VRAM share while up. It is **out of scope** — never stop, restart, or modify it. **Phil stops big-cat himself before Forge sessions and restarts it after.** If a Forge job is requested while big-cat is holding VRAM, `forge-api` refuses and reports it (see §9); it does not stop big-cat.
 - Existing disks and mounts (`lsblk`, `df -h`), free space on root.
 - Whether Kubernetes services (kubelet, containerd workloads) are running. If they are, stop and ask — do not stop them unilaterally.
 - Existing Caddy config location and how hostnames are added (Caddy runs in an LXC outside k8s; Phil adds routes there).
 
 **Command hygiene:** every command you run or propose must say which machine it targets. Explain impact before anything destructive (disk ops, deleting containers/volumes, stopping services).
 
-**Visibility:** any remote command expected to run longer than ~30 seconds (Docker builds, model downloads, Phase 1 smoke tests, batch jobs) runs inside a named tmux session on the VM — `tmux new -d -s forge '<command>'` — so Phil can attach from a second terminal or phone (`ssh k8s-gpu-1`, then `tmux attach -t forge`) and so the job survives a dropped SSH connection. When you start one, tell Phil the attach command. Poll `tmux capture-pane -pt forge` or a log file for progress rather than blocking on the session.
+**Visibility:** any remote command expected to run longer than ~30 seconds (image builds, model downloads, Phase 1 smoke tests, batch jobs) runs inside a named tmux session on the VM — `tmux new -d -s forge '<command>'` — so Phil can attach from a second terminal or phone (`ssh gpu`, then `tmux attach -t forge`) and so the job survives a dropped SSH connection. When you start one, tell Phil the attach command. Poll `tmux capture-pane -pt forge` or a log file for progress rather than blocking on the session.
 
 ---
 
@@ -73,7 +74,7 @@ workstation ──ssh──▶ k8s-gpu-1
                      /srv/forge  (data volume)
 ```
 
-### Services (docker compose)
+### Services (nerdctl compose)
 
 | Service | Stack | GPU | Notes |
 |---|---|---|---|
@@ -85,7 +86,7 @@ workstation ──ssh──▶ k8s-gpu-1
 
 **Workflows are code.** `workflows/` in the repo holds one API-format JSON per stage: `image-refs.json`, `image-to-3d.json`, `rig.json`, plus sprite/texture variants in Phase 5. `forge-api` loads the JSON, patches the input nodes (prompt, seed, image path, profile values), submits to `POST /prompt`, tracks progress on the WebSocket, and collects outputs from ComfyUI's output dir (bind-mounted under `/srv/forge/jobs/<id>/raw/`). Workflows are authored/tuned in ComfyUI's web UI, exported as API format, and committed. Never hand-edit node IDs in code; look nodes up by title.
 
-**GPU is on-demand.** `forge-api` starts the `comfyui` container when a job needs it and stops it after `FORGE_GPU_IDLE_TIMEOUT` (default 10 min) with no queued or running jobs, via the Docker socket (`docker compose up -d comfyui` / `docker compose stop comfyui`). Stopping the container is the unload mechanism — do not rely on in-process VRAM freeing. `comfyui` is never `restart: always`. Custom-node auto-updating is disabled; node versions are pinned in the Dockerfile.
+**GPU is on-demand.** `forge-api` starts the `comfyui` container when a job needs it and stops it after `FORGE_GPU_IDLE_TIMEOUT` (default 10 min) with no queued or running jobs, by shelling out to `sudo nerdctl compose -f <compose file> up -d comfyui` / `stop comfyui` (no Docker socket exists on this VM; `forge-api` runs with a sudoers entry scoped to exactly those nerdctl commands, or runs as root — pick the simpler one and document it). Stopping the container is the unload mechanism — do not rely on in-process VRAM freeing. `comfyui` is never `restart: always`. Custom-node auto-updating is disabled; node versions are pinned in the Dockerfile.
 
 **One GPU workload at a time** in v1. ComfyUI's own queue serializes stages naturally; `forge-api` submits one workflow at a time per job.
 
@@ -110,7 +111,7 @@ Reference images: **quality is the criterion.** Phase 2 must run a bake-off on 3
 
 ## 4. Storage layout
 
-New dedicated virtual disk attached to the VM, mounted at `/srv/forge`. Model weights, outputs, and Docker named volumes all live here. Root disk stays untouched.
+New dedicated virtual disk attached to the VM, mounted at `/srv/forge`. Model weights, outputs, and all Forge container volumes (bind mounts) live here. Root disk stays untouched.
 
 ```
 /srv/forge/
@@ -236,9 +237,9 @@ Work strictly in order. Each phase ends with a PR to `main` and a short `docs/ph
 
 1. Audit per §2; write `docs/environment.md`.
 2. Add a 400 GB virtual disk to VM **102** from the Proxmox host (`qm set 102 --scsi1 <storage>:400`). Discover the storage pool with `pvesm status` and confirm the choice with Phil before running it. Inside the VM: partition, ext4, mount at `/srv/forge`, add to `/etc/fstab` by UUID.
-3. Configure Docker to keep its data root on the default disk but all Forge named volumes and bind mounts under `/srv/forge`.
+3. Keep containerd's data root where it is; all Forge named volumes and bind mounts go under `/srv/forge`.
 
-**Accept:** `/srv/forge` mounted, survives reboot, ≥390 GB free; Docker GPU hello-world passes.
+**Accept:** `/srv/forge` mounted, survives reboot, ≥390 GB free; the nerdctl GPU check from §2 passes; big-cat containers are still running afterward.
 
 ### Phase 1 — Blackwell verification (gates every model)
 
@@ -307,11 +308,11 @@ Audio (SFX/music/TTS, including trailer soundtracks), MCP server over the REST A
 
 ## 9. Operational constraints
 
-- Kubernetes must be down while Forge runs (both want the GPU). Check before `compose up`; refuse to start GPU services if `nvidia-smi` shows another process holding VRAM.
+- Kubernetes must be down and big-cat stopped (by Phil) while Forge runs; Forge expects the GPU to itself. As a guard, before starting `comfyui`, `forge-api` checks free VRAM via `nvidia-smi --query-gpu=memory.free` and refuses to start a job if it is below `FORGE_MIN_FREE_VRAM_GB` (default **80**), naming the processes holding the rest so Phil knows what to stop. Phase 1 records each model's peak VRAM so the threshold can be lowered later if sharing ever becomes desirable.
 - No public exposure. Caddy route is LAN + Tailscale only; no Cloudflare tunnel.
-- Logs to stdout; `docker compose logs` is the observability story for v1. Health endpoint reports GPU state.
+- Logs to stdout; `nerdctl compose logs` is the observability story for v1. Health endpoint reports GPU state (free VRAM, whether `comfyui` is up).
 - Backups: `/srv/forge/jobs` and `/srv/forge/db` are the only irreplaceable data. Models re-download. Document a one-line rsync.
-- Idle noise: after the idle timeout, `nvidia-smi` must show no Forge process and VRAM near 0, and the only **Forge** containers still running are `forge-api` and `forge-ui`. Forge only ever starts/stops containers defined in its own `docker-compose.yml`. Any other containers on the VM (existing or future, Forge-unrelated) are out of scope: never stop, restart, or modify them, and never include them in the idle check.
+- Idle noise: after the idle timeout, `nvidia-smi` must show no Forge process and Forge's VRAM contribution at 0, and the only **Forge** containers still running are `forge-api` and `forge-ui`. Forge only ever starts/stops containers defined in its own `compose.yaml`. Any other containers on the VM (`big-cat`, or anything future and Forge-unrelated) are out of scope: never stop, restart, or modify them, and never include them in the idle check.
 
 ---
 
