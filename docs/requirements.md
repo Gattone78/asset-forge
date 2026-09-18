@@ -309,6 +309,8 @@ Audio (SFX/music/TTS, including trailer soundtracks), MCP server over the REST A
 ## 9. Operational constraints
 
 - Kubernetes must be down and big-cat stopped (by Phil) while Forge runs; Forge expects the GPU to itself. As a guard, before starting `comfyui`, `forge-api` checks free VRAM via `nvidia-smi --query-gpu=memory.free` and refuses to start a job if it is below `FORGE_MIN_FREE_VRAM_GB` (default **80**), naming the processes holding the rest so Phil knows what to stop. Phase 1 records each model's peak VRAM so the threshold can be lowered later if sharing ever becomes desirable.
+- Boot: `forge-api` and `forge-ui` may start at boot (systemd unit running `nerdctl compose up -d forge-api forge-ui`); **`comfyui` is never started at boot** — the host driver and CDI spec are not ready for the first seconds after boot, and `comfyui` is on-demand anyway.
+- Disk: containerd keeps images on the root disk (do not move its root — other workloads depend on it). Everything else Forge writes — HF cache, BuildKit cache, model weights, outputs — goes under `/srv/forge`. If root free space drops below **30 GB** during a build, stop and ask Phil before continuing; prune dangling images (`sudo nerdctl image prune`) only after the build succeeds.
 - No public exposure. Caddy route is LAN + Tailscale only; no Cloudflare tunnel.
 - Logs to stdout; `nerdctl compose logs` is the observability story for v1. Health endpoint reports GPU state (free VRAM, whether `comfyui` is up).
 - Backups: `/srv/forge/jobs` and `/srv/forge/db` are the only irreplaceable data. Models re-download. Document a one-line rsync.

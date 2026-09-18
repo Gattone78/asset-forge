@@ -1,0 +1,33 @@
+# Asset Forge — nerdctl compose (rootful: `sudo nerdctl compose ...`).
+# Phase 1: only the comfyui service. forge-api / forge-ui / svc-post arrive in Phase 2.
+# comfyui is on-demand: never `restart: always`, never started at boot (req §9).
+name: forge
+
+services:
+  comfyui:
+    build:
+      context: ./comfyui
+      dockerfile: Dockerfile
+    image: forge/comfyui:0.1.0
+    restart: "no"
+    ports:
+      - "8188:8188"
+    environment:
+      - HF_HOME=/opt/ComfyUI/models/hf
+      - HF_TOKEN=${HF_TOKEN:-}
+      - COMFY_ENV_ROOT=/opt/ComfyUI/ce
+    volumes:
+      - ${FORGE_DATA:-/srv/forge}/models:/opt/ComfyUI/models
+      - ${FORGE_DATA:-/srv/forge}/comfy/output:/opt/ComfyUI/output
+      - ${FORGE_DATA:-/srv/forge}/comfy/input:/opt/ComfyUI/input
+      - ${FORGE_DATA:-/srv/forge}/comfy/temp:/opt/ComfyUI/temp
+      - ${FORGE_DATA:-/srv/forge}/comfy/user:/opt/ComfyUI/user
+      - ${FORGE_DATA:-/srv/forge}/comfy/ce:/opt/ComfyUI/ce
+    shm_size: 8g
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

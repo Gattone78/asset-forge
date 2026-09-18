@@ -99,3 +99,14 @@ sr0     1024M rom
 ## Repo / GitHub
 - Remote `origin` = `https://github.com/Gattone78/asset-forge.git` (HTTPS, not the SSH alias mentioned in §1). `gh` is logged in as `pgattone` with **WRITE** permission on the repo. Default branch `main`.
 - Working tree had an uncommitted 2-line edit to `docs/requirements.md` at session start.
+
+## Phase 1 additions (2026-09-18)
+
+- **Forge BuildKit daemon:** `forge-buildkit.service` (enabled), OCI worker, root `/srv/forge/buildkit`, socket `/run/forge-buildkit/buildkitd.sock`. The system `buildkit.service` (used by big-cat) is untouched. Build with `deploy/build.sh`.
+- **Image:** `forge/comfyui:0.1.0` (8.8 GB) in containerd on the root disk. ComfyUI v0.36.0 @ `ee71d5c4`, torch 2.14.0+cu130, ComfyUI-UniRig @ `69ee59dc`. Full pins in `docs/phase-1.md`.
+- **Container:** `forge-comfyui-1`, port 8188 on the LAN (`http://192.168.1.51:8188`), `restart: "no"`, never started at boot. Bind mounts: `/srv/forge/models`, `/srv/forge/comfy/{output,input,temp,user,ce}`.
+- **UniRig isolated env:** 12 GB pixi env at `/srv/forge/comfy/ce/envs/unirig-nodes` (torch 2.8.0+cu128, flash_attn, spconv, bpy). Created by `python install.py` in the container; must exist before the UniRig nodes register.
+- **Disk after Phase 1:** `/srv/forge` 87 GB used / 307 GB free (models 49 GB, UniRig env 12 GB, BuildKit cache 26 GB). Root 104 GB free after the container is stopped (46 GB at the low point during builds).
+- **Models on disk:** see the table in `docs/phase-1.md`. `HF_TOKEN` not required for anything downloaded so far.
+- **Measured VRAM (peak / resident):** FLUX.1 schnell bf16 35.8 / 33 GB; TRELLIS.2 bf16 @1024 ≈ 19 / 13.7 GB; UniRig 5.4 / 3.0 GB; container idle 560 MiB; stopped 2 MiB. Informs `FORGE_MIN_FREE_VRAM_GB` (default 80 is comfortable for one model at a time).
+- **Attach commands used:** `ssh gpu`, then `tmux attach -t forge` (builds / installs) or `tmux attach -t forge-dl`, `forge-dl2`, `forge-dl3` (model downloads; all finished and gone).
