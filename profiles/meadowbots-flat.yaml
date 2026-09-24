@@ -1,0 +1,22 @@
+name: meadowbots-flat
+game: meadowbots
+style_prompt: "cute rounded low-detail 3D toy, soft pastel colors, simple shapes, friendly, clean silhouette, no text, plain background"
+negative_prompt: "realistic, photo, gritty, sharp edges, text, watermark, busy background"
+image:
+  count: 4
+  size: 1024
+  steps: 4            # schnell
+  views: front        # front | multi  (Phase 2 bake-off decides the default; see docs/phase-2.md)
+mesh:
+  target_tris: 12000  # decimate target; hard max 20000
+  max_tris: 20000
+  max_texture: 2048
+  material: flat-albedo   # or: pbr | vertex
+  normalize: true
+  target_height_m: 0.6    # override per job
+  forward_yaw_deg: 180    # TRELLIS.2 output faces +Z (glTF convention); normalize turns it to face -Z (req §8)
+  compression: meshopt    # or: draco
+  resolution: 1024        # TRELLIS.2 upsample stage target resolution
+rig:
+  default: false          # jobs opt in with --rig
+formats: [glb, fbx]

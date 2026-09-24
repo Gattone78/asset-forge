@@ -1,0 +1,7 @@
+# Scoped sudo for forge-api (req §3): exactly the nerdctl invocations it needs, nothing else.
+# hqadmin currently has blanket NOPASSWD sudo; this file is what remains sufficient if that is ever tightened.
+# Install (on gpu): sudo install -m 0440 deploy/sudoers-forge /etc/sudoers.d/forge && sudo visudo -c
+hqadmin ALL=(root) NOPASSWD: /usr/local/bin/nerdctl compose -f /srv/forge/src/asset-forge/compose.yaml up -d comfyui
+hqadmin ALL=(root) NOPASSWD: /usr/local/bin/nerdctl compose -f /srv/forge/src/asset-forge/compose.yaml stop comfyui
+hqadmin ALL=(root) NOPASSWD: /usr/local/bin/nerdctl ps *
+hqadmin ALL=(root) NOPASSWD: /usr/local/bin/nerdctl run --rm --user 1000\:1000 -v /srv/forge\:/srv/forge forge/svc-post\:0.1.0 *

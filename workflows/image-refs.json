@@ -1,0 +1,127 @@
+{
+ "1": {
+  "class_type": "UNETLoader",
+  "_meta": {
+   "title": "Load FLUX.1 schnell"
+  },
+  "inputs": {
+   "unet_name": "flux1-schnell.safetensors",
+   "weight_dtype": "default"
+  }
+ },
+ "2": {
+  "class_type": "DualCLIPLoader",
+  "_meta": {
+   "title": "Load text encoders"
+  },
+  "inputs": {
+   "clip_name1": "t5xxl_fp16.safetensors",
+   "clip_name2": "clip_l.safetensors",
+   "type": "flux"
+  }
+ },
+ "3": {
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "Load VAE"
+  },
+  "inputs": {
+   "vae_name": "ae.safetensors"
+  }
+ },
+ "4": {
+  "class_type": "CLIPTextEncode",
+  "_meta": {
+   "title": "Prompt"
+  },
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": "a cute round friendly garden robot with big eyes, low-detail 3D toy, soft pastel colors, simple shapes, clean silhouette, front view, centered, plain white background, no text"
+  }
+ },
+ "5": {
+  "class_type": "ConditioningZeroOut",
+  "_meta": {
+   "title": "Negative (zeroed)"
+  },
+  "inputs": {
+   "conditioning": [
+    "4",
+    0
+   ]
+  }
+ },
+ "6": {
+  "class_type": "EmptySD3LatentImage",
+  "_meta": {
+   "title": "Latent"
+  },
+  "inputs": {
+   "width": 1024,
+   "height": 1024,
+   "batch_size": 1
+  }
+ },
+ "7": {
+  "class_type": "KSampler",
+  "_meta": {
+   "title": "Sampler"
+  },
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "positive": [
+    "4",
+    0
+   ],
+   "negative": [
+    "5",
+    0
+   ],
+   "latent_image": [
+    "6",
+    0
+   ],
+   "seed": 1,
+   "steps": 4,
+   "cfg": 1.0,
+   "sampler_name": "euler",
+   "scheduler": "simple",
+   "denoise": 1.0
+  }
+ },
+ "8": {
+  "class_type": "VAEDecode",
+  "_meta": {
+   "title": "Decode"
+  },
+  "inputs": {
+   "samples": [
+    "7",
+    0
+   ],
+   "vae": [
+    "3",
+    0
+   ]
+  }
+ },
+ "9": {
+  "class_type": "SaveImage",
+  "_meta": {
+   "title": "Save"
+  },
+  "inputs": {
+   "images": [
+    "8",
+    0
+   ],
+   "filename_prefix": "jobs/unset/refs/front"
+  }
+ }
+}

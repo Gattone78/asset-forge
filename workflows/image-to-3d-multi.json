@@ -11,10 +11,10 @@
  "2": {
   "class_type": "LoadImage",
   "_meta": {
-   "title": "Reference image"
+   "title": "Reference image front"
   },
   "inputs": {
-   "image": "phase1-ref.png"
+   "image": "jobs/unset/ref-front.png"
   }
  },
  "3": {
@@ -74,7 +74,7 @@
     0
    ],
    "image": [
-    "4",
+    "43",
     0
    ]
   }
@@ -276,7 +276,7 @@
  "19": {
   "class_type": "Trellis2UpsampleStage",
   "_meta": {
-   "title": "Upsample stage (1024)"
+   "title": "Upsample stage"
   },
   "inputs": {
    "positive": [
@@ -423,29 +423,17 @@
    ]
   }
  },
- "26": {
-  "class_type": "GetMeshInfo",
-  "_meta": {
-   "title": "Mesh info"
-  },
-  "inputs": {
-   "mesh": [
-    "21",
-    0
-   ]
-  }
- },
  "27": {
   "class_type": "SaveGLB",
   "_meta": {
-   "title": "Save raw shape GLB"
+   "title": "Save raw"
   },
   "inputs": {
    "mesh": [
     "21",
     0
    ],
-   "filename_prefix": "phase1/test-trellis2-raw"
+   "filename_prefix": "jobs/unset/raw/raw"
   }
  },
  "28": {
@@ -467,14 +455,14 @@
  "29": {
   "class_type": "SaveGLB",
   "_meta": {
-   "title": "Save vertex-colored GLB"
+   "title": "Save painted"
   },
   "inputs": {
    "mesh": [
     "28",
     0
    ],
-   "filename_prefix": "phase1/test-trellis2-painted"
+   "filename_prefix": "jobs/unset/raw/painted"
   }
  },
  "30": {
@@ -500,91 +488,6 @@
    "precluster_max_verts": 20000000
   }
  },
- "31": {
-  "class_type": "DecimateMesh",
-  "_meta": {
-   "title": "Decimate to 20k"
-  },
-  "inputs": {
-   "mesh": [
-    "30",
-    0
-   ],
-   "target_face_count": 20000,
-   "placement_mode": "midpoint"
-  }
- },
- "32": {
-  "class_type": "PaintMesh",
-  "_meta": {
-   "title": "Vertex-paint decimated"
-  },
-  "inputs": {
-   "mesh": [
-    "31",
-    0
-   ],
-   "voxel_colors": [
-    "25",
-    0
-   ]
-  }
- },
- "33": {
-  "class_type": "SaveGLB",
-  "_meta": {
-   "title": "Save remeshed+decimated GLB"
-  },
-  "inputs": {
-   "mesh": [
-    "32",
-    0
-   ],
-   "filename_prefix": "phase1/test-trellis2-decimated"
-  }
- },
- "34": {
-  "class_type": "RenderMesh",
-  "_meta": {
-   "title": "Render painted mesh"
-  },
-  "inputs": {
-   "mesh": [
-    "28",
-    0
-   ],
-   "mode": "auto",
-   "width": 768,
-   "height": 768,
-   "background": "#ffffff"
-  }
- },
- "35": {
-  "class_type": "SaveImage",
-  "_meta": {
-   "title": "Save render"
-  },
-  "inputs": {
-   "images": [
-    "34",
-    0
-   ],
-   "filename_prefix": "phase1/test-trellis2-render"
-  }
- },
- "36": {
-  "class_type": "SaveGLB",
-  "_meta": {
-   "title": "Save remeshed GLB (pre-decimate)"
-  },
-  "inputs": {
-   "mesh": [
-    "30",
-    0
-   ],
-   "filename_prefix": "phase1/test-trellis2-remeshed"
-  }
- },
  "37": {
   "class_type": "PaintMesh",
   "_meta": {
@@ -604,14 +507,138 @@
  "38": {
   "class_type": "SaveGLB",
   "_meta": {
-   "title": "Save remeshed+painted GLB"
+   "title": "Save remeshed painted"
   },
   "inputs": {
    "mesh": [
     "37",
     0
    ],
-   "filename_prefix": "phase1/test-trellis2-remeshed-painted"
+   "filename_prefix": "jobs/unset/raw/remeshed-painted"
+  }
+ },
+ "40": {
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "Reference image side"
+  },
+  "inputs": {
+   "image": "jobs/unset/ref-side.png"
+  }
+ },
+ "401": {
+  "class_type": "RemoveBackground",
+  "_meta": {
+   "title": "Subject mask side"
+  },
+  "inputs": {
+   "bg_removal_model": [
+    "1",
+    0
+   ],
+   "image": [
+    "40",
+    0
+   ]
+  }
+ },
+ "402": {
+  "class_type": "ImageCropToMask",
+  "_meta": {
+   "title": "Crop to subject side"
+  },
+  "inputs": {
+   "images": [
+    "40",
+    0
+   ],
+   "masks": [
+    "401",
+    0
+   ],
+   "width": 1024,
+   "height": 1024,
+   "pad_factor": 1.0,
+   "grow_mask": 0,
+   "background": "#000000"
+  }
+ },
+ "41": {
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "Reference image back"
+  },
+  "inputs": {
+   "image": "jobs/unset/ref-back.png"
+  }
+ },
+ "411": {
+  "class_type": "RemoveBackground",
+  "_meta": {
+   "title": "Subject mask back"
+  },
+  "inputs": {
+   "bg_removal_model": [
+    "1",
+    0
+   ],
+   "image": [
+    "41",
+    0
+   ]
+  }
+ },
+ "412": {
+  "class_type": "ImageCropToMask",
+  "_meta": {
+   "title": "Crop to subject back"
+  },
+  "inputs": {
+   "images": [
+    "41",
+    0
+   ],
+   "masks": [
+    "411",
+    0
+   ],
+   "width": 1024,
+   "height": 1024,
+   "pad_factor": 1.0,
+   "grow_mask": 0,
+   "background": "#000000"
+  }
+ },
+ "42": {
+  "class_type": "ImageBatch",
+  "_meta": {
+   "title": "Batch front+side"
+  },
+  "inputs": {
+   "image1": [
+    "4",
+    0
+   ],
+   "image2": [
+    "402",
+    0
+   ]
+  }
+ },
+ "43": {
+  "class_type": "ImageBatch",
+  "_meta": {
+   "title": "Batch +back"
+  },
+  "inputs": {
+   "image1": [
+    "42",
+    0
+   ],
+   "image2": [
+    "412",
+    0
+   ]
   }
  }
 }
