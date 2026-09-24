@@ -8,6 +8,7 @@ import * as comfy from "./comfy.ts";
 import { countByStatus, getJob, insertJob, listJobs, recoverRunning, updateJob, type JobRequest } from "./db.ts";
 import { listProfiles, loadProfile } from "./profiles.ts";
 import { gpu, isBusy, startWorker } from "./worker.ts";
+import { viewerHtml } from "./viewer.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -35,6 +36,7 @@ app.post("/jobs", async (req, reply) => {
     rerun_of: b.rerun_of, restart_comfy: !!b.restart_comfy,
   };
   if (jr.rig) return reply.code(501).send({ error: "--rig arrives in Phase 4" });
+  if (jr.views === "multi") return reply.code(501).send({ error: "views=multi is not effective: ComfyUI core's Trellis2Conditioning treats an image batch as separate objects, so the result equals the front-only run (Phase 2 bake-off, docs/phase-2.md). Multi-view needs the Pixal3D multi-view model; not wired yet." });
   const job = insertJob(randomUUID(), jr);
   return reply.code(201).send(job);
 });
@@ -69,6 +71,16 @@ app.get("/assets/:job/*", async (req, reply) => {
   const type = f.endsWith(".glb") ? "model/gltf-binary" : f.endsWith(".png") ? "image/png" : f.endsWith(".json") ? "application/json" : f.endsWith(".fbx") ? "application/octet-stream" : "application/octet-stream";
   return reply.type(type).header("content-length", statSync(f).size).send(createReadStream(f));
 });
+app.get("/viewer", async (req, reply) => {
+  const q = req.query as Record<string, string>;
+  const job = getJob(q.job ?? "");
+  if (!job) return reply.code(404).send({ error: "no such job" });
+  const outDir = join(paths.jobs, job.id, "out");
+  const glb = q.file ?? (existsSync(outDir) ? readdirSync(outDir).find((f) => f.endsWith(".glb") && !f.endsWith(".blender.glb")) : undefined);
+  if (!glb) return reply.code(404).send({ error: "job has no GLB yet" });
+  return reply.type("text/html").send(viewerHtml(job.id, `out/${glb}`));
+});
+
 for (const action of ["approve", "reject"] as const) {
   app.post(`/jobs/:id/${action}`, async (req, reply) => {
     const id = (req.params as any).id; const job = getJob(id);

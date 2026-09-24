@@ -110,3 +110,12 @@ sr0     1024M rom
 - **Models on disk:** see the table in `docs/phase-1.md`. `HF_TOKEN` not required for anything downloaded so far.
 - **Measured VRAM (peak / resident):** FLUX.1 schnell bf16 35.8 / 33 GB; TRELLIS.2 bf16 @1024 ≈ 19 / 13.7 GB; UniRig 5.4 / 3.0 GB; container idle 560 MiB; stopped 2 MiB. Informs `FORGE_MIN_FREE_VRAM_GB` (default 80 is comfortable for one model at a time).
 - **Attach commands used:** `ssh gpu`, then `tmux attach -t forge` (builds / installs) or `tmux attach -t forge-dl`, `forge-dl2`, `forge-dl3` (model downloads; all finished and gone).
+
+## Phase 2 additions (2026-09-24)
+
+- **forge-api** runs on the host as `hqadmin`: `forge-api.service` (enabled; boot-ordered after `nvidia-cdi-refresh`), `EnvironmentFile=/srv/forge/.env`, port **8080** on the LAN (`http://192.168.1.51:8080`, `/health`, `/viewer?job=<id>`). Node 22.23.2 at `/srv/forge/tools/node` (tarball, not apt). Sudoers scope in `/etc/sudoers.d/forge`.
+- **svc-post** image `forge/svc-post:0.1.0` (Blender 4.5.14 + gltf-transform 4.5.0), run per job with `--user 1000:1000`.
+- **Data:** `/srv/forge/jobs/<id>/{request.json,log.txt,refs/,raw/,out/}` (~630 MB per creature job, mostly `raw/`), `/srv/forge/db/forge.sqlite` (WAL), `/srv/forge/profiles/` (runtime copy), `/srv/forge/bakeoff/` (Phase 2 experiments, disposable), `/srv/forge/comfy/{input,output}/jobs/` (transient).
+- **Backups (req 9):** `rsync -a --delete gpu:/srv/forge/jobs gpu:/srv/forge/db <dest>/`.
+- **Idle behaviour verified:** comfyui stops `FORGE_GPU_IDLE_TIMEOUT` (600 s) after the last job; VRAM 2 MiB after.
+- **Outage 2026-09-18 20:02 UTC:** guest journal ends abruptly (no OOM or hung-task record); Proxmox was taken down by Phil afterwards; VM back 2026-09-24 16:53 UTC. Two boot-time job failures (`nvidia-smi` not ready) led to the boot gate in forge-api.

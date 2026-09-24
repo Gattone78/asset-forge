@@ -14,7 +14,7 @@ mesh:
   material: flat-albedo   # or: pbr | vertex
   normalize: true
   target_height_m: 0.6    # override per job
-  forward_yaw_deg: 0      # rotation about the up axis applied by normalize so the front faces -Z
+  forward_yaw_deg: 180    # TRELLIS.2 output faces +Z (glTF convention); normalize turns it to face -Z (req §8)
   compression: meshopt    # or: draco
   resolution: 1024        # TRELLIS.2 upsample stage target resolution
 rig:

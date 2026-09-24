@@ -77,6 +77,8 @@ def world_bbox(obj):
 def normalize(obj, height, yaw_deg):
     """Origin at feet, centred, uniform scale to `height` metres, yaw about Z. Applied into the mesh data."""
     if yaw_deg:
+        # The glTF importer leaves objects in QUATERNION rotation mode, where rotation_euler is ignored.
+        obj.rotation_mode = "XYZ"
         obj.rotation_euler = (0.0, 0.0, math.radians(yaw_deg))
         bpy.ops.object.select_all(action="DESELECT")
         obj.select_set(True)
@@ -219,7 +221,7 @@ def frame_camera(obj, azimuth_deg, elevation_deg, margin=1.12):
     bpy.context.scene.collection.objects.link(cam)
     az, el = math.radians(azimuth_deg), math.radians(elevation_deg)
     d = radius * 4
-    # Azimuth 0 = camera on Blender -Y looking +Y (i.e. looking at the glTF -Z face == the front).
+    # Azimuth 0 = camera on Blender -Y looking +Y, i.e. it shows the glTF +Z face. glTF (x,y,z) -> Blender (x,-z,y).
     pos = centre + Vector((d * math.sin(az) * math.cos(el), -d * math.cos(az) * math.cos(el), d * math.sin(el)))
     cam.location = pos
     direction = centre - pos
@@ -353,8 +355,9 @@ def cmd_process(a):
     report["after"] = mesh_stats(obj)
 
     if a.thumb:
-        # Render with an emission copy so the thumbnail is lighting-independent.
-        frame_camera(obj, 35, 18)
+        # Three-quarter view of the FRONT: the model now faces glTF -Z == Blender +Y, and azimuth 0 sits on
+        # Blender -Y, so 180 + 35 looks at the face from front-left.
+        frame_camera(obj, 215, 18)
         render_png(a.thumb, a.thumb_size)
 
     bpy.ops.object.select_all(action="DESELECT")

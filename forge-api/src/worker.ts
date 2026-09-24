@@ -16,6 +16,8 @@ let busy = false;
 export const gpu = { lastStop: null as null | comfy.VramState, idleStopAt: null as null | string };
 
 export function startWorker(): void {
+  // A restart while comfyui is up must not leave it running forever: arm the idle timer at startup.
+  comfy.isUp().then((up) => { if (up && !nextQueued()) { console.log("[idle] comfyui already up at startup; idle timer armed"); scheduleIdleStop(); } }).catch(() => {});
   (async () => {
     for (;;) {
       try {
@@ -213,8 +215,9 @@ async function stagePost(id: string, req: Job["request"], profile: Profile, refs
     p.on("error", rej);
     p.on("close", (code) => code === 0 ? res() : rej(new Error(`svc-post exited ${code}`)));
   });
-  // Tidy intermediates; keep the final glb/fbx/sidecar/thumb (+ post report).
-  for (const f of readdirSync(join(dir, "out"))) if (/\.(welded|simplified|blender)\.glb$|sidecar-extra\.json$/.test(f)) rmSync(join(dir, "out", f));
+  // Tidy intermediates; keep the final glb/fbx/sidecar/thumb (+ post report) and the uncompressed
+  // <name>.blender.glb (Blender / tools without a meshopt decoder need it; ~4 MB).
+  for (const f of readdirSync(join(dir, "out"))) if (/\.(welded|simplified)\.glb$|sidecar-extra\.json$/.test(f)) rmSync(join(dir, "out", f));
   const files = readdirSync(join(dir, "out"));
   log(`post: done in ${((Date.now() - t0) / 1000).toFixed(1)}s -> ${files.join(", ")}`);
   return { files };
