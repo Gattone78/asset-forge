@@ -18,5 +18,6 @@ mesh:
   compression: meshopt    # or: draco
   resolution: 1024        # TRELLIS.2 upsample stage target resolution
 rig:
-  default: false          # jobs opt in with --rig
+  default: false          # jobs opt in with --rig (creatures only; props/plants get named pivots)
+  template: articulationxl # UniRig skeleton template: articulationxl (any creature) | mixamo (humanoid)
 formats: [glb, fbx]

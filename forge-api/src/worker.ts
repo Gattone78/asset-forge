@@ -77,8 +77,13 @@ async function runJob(job0: Job): Promise<void> {
 
     // ---- stage 3: post ----
     const name = `${profile.game}-${req.type}-${slug(req.prompt)}-${id.slice(0, 6)}`;
-    const out = await stagePost(id, req, profile, refs, raw, name, log);
-    const result = { name, files: out.files, refs: refs.files, raw: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, basename(v)])), seconds: (Date.now() - t0) / 1000 };
+    let out = await stagePost(id, req, profile, refs, raw, name, log);
+    // ---- stage 4 (opt-in): auto-rig ----
+    if (req.rig) {
+      set("rig", 0.9);
+      out = await stageRig(id, req, profile, name, log);
+    }
+    const result = { name, files: out.files, refs: refs.files, raw: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, basename(v)])), rigged: !!req.rig, seconds: (Date.now() - t0) / 1000 };
     updateJob(id, { status: "review", stage: "review", progress: 1, result });
     log(`done in ${result.seconds.toFixed(0)}s -> ${name}`);
   } catch (e: any) {
@@ -189,6 +194,46 @@ async function stage3d(id: string, req: Job["request"], profile: Profile, refs: 
   if (!out["remeshed-painted"] || !out["painted"] || !out["raw"]) throw new Error("3d stage did not produce raw/painted/remeshed-painted GLBs: " + Object.keys(out).join(","));
   onP(1);
   return out;
+}
+
+/** Rig stage (Phase 4): UniRig on the finished, normalized asset (rig.json), then a Blender merge that
+ *  re-applies the baked material, re-normalizes, and exports <name>.rigged.glb / .fbx. */
+async function stageRig(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void): Promise<{ files: string[] }> {
+  const dir = jobDir(id);
+  const textured = join(dir, "out", `${name}.blender.glb`);
+  if (!existsSync(textured)) throw new Error("rig stage needs the uncompressed post output (" + basename(textured) + ")");
+  // UniRigLoadMesh's file list is frozen at container start (see comfy.RIG_INPUT): always overwrite the
+  // fixed placeholder. Safe because the worker runs one job at a time.
+  await comfy.ensureUp(log);
+  copyFileSync(textured, join(config.comfyInput, comfy.RIG_INPUT));
+  const wf = loadWorkflow("rig.json");
+  const template = (profile.rig as any)?.template ?? "articulationxl";
+  setInput(wf, "Rig input mesh", "file_path", comfy.RIG_INPUT);
+  setInput(wf, "Auto rig", "skeleton_template", template);
+  setInput(wf, "Auto rig", "fbx_name", `rig-${id.slice(0, 8)}`);
+  const t0 = Date.now();
+  await comfy.run(wf, () => {});
+  // UniRigAutoRig writes <fbx_name>_<template>.fbx into ComfyUI's output root.
+  const produced = readdirSync(config.comfyOutput).filter((f) => f.startsWith(`rig-${id.slice(0, 8)}`) && f.endsWith(".fbx"));
+  if (!produced.length) throw new Error("UniRig produced no FBX");
+  const rawFbx = join(dir, "raw", "rigged-unirig.fbx");
+  renameSync(join(config.comfyOutput, produced[0]), rawFbx);
+  log(`rig: UniRig (${template}) done in ${((Date.now() - t0) / 1000).toFixed(1)}s -> raw/rigged-unirig.fbx`);
+  const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
+    "--mode", "rig", "--rigged", rawFbx, "--textured", textured, "--out-dir", join(dir, "out"), "--name", name,
+    "--height", String(req.height_m ?? profile.mesh.target_height_m), "--template", template];
+  const t1 = Date.now();
+  await new Promise<void>((res, rej) => {
+    const p = spawn(config.nerdctl[0], args, { stdio: ["ignore", "pipe", "pipe"] });
+    p.stdout.on("data", (d) => appendFileSync(join(dir, "log.txt"), d));
+    p.stderr.on("data", (d) => appendFileSync(join(dir, "log.txt"), d));
+    p.on("error", rej);
+    p.on("close", (code) => code === 0 ? res() : rej(new Error(`svc-post rig exited ${code}`)));
+  });
+  for (const f of readdirSync(join(dir, "out"))) if (/\.rigged\.blender\.glb$/.test(f)) rmSync(join(dir, "out", f));
+  const files = readdirSync(join(dir, "out"));
+  log(`rig: merge done in ${((Date.now() - t1) / 1000).toFixed(1)}s -> ${files.filter((f) => f.includes("rig")).join(", ")}`);
+  return { files };
 }
 
 async function stagePost(id: string, req: Job["request"], profile: Profile, refs: Refs, raw: Record<string, string>, name: string, log: (m: string) => void): Promise<{ files: string[] }> {

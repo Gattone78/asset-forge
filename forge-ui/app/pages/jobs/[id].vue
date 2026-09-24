@@ -11,13 +11,18 @@ const candidates = ref<any>(null);
 const log = ref("");
 const err = ref("");
 const busy = ref("");
-const viewerInfo = ref<{ tris: number; height: number; minY: number } | null>(null);
+const viewerInfo = ref<{ tris: number; height: number; minY: number; skinned?: number; bones?: number } | null>(null);
+const wiggle = ref(true);
 let timer: any;
 
 const active = computed(() => !!job.value && ACTIVE.has(job.value.status));
 const outFiles = computed(() => assets.value?.files.filter((f) => f.path.startsWith("out/")) ?? []);
 const refFiles = computed(() => assets.value?.files.filter((f) => f.path.startsWith("refs/") && f.path.endsWith(".png")) ?? []);
-const finalGlb = computed(() => outFiles.value.find((f) => f.path.endsWith(".glb") && !f.path.endsWith(".blender.glb"))?.path);
+const finalGlb = computed(() => outFiles.value.find((f) => f.path.endsWith(".glb") && !f.path.endsWith(".blender.glb") && !f.path.endsWith(".rigged.glb"))?.path);
+const riggedGlb = computed(() => outFiles.value.find((f) => f.path.endsWith(".rigged.glb"))?.path);
+const riggedFbx = computed(() => outFiles.value.find((f) => f.path.endsWith(".rigged.fbx"))?.path);
+const showRigged = ref(false);
+const previewSrc = computed(() => (showRigged.value && riggedGlb.value) ? riggedGlb.value : finalGlb.value);
 const fbx = computed(() => outFiles.value.find((f) => f.path.endsWith(".fbx"))?.path);
 const sidecarFile = computed(() => outFiles.value.find((f) => f.path.endsWith(".sidecar.json"))?.path);
 const sidecar = computed(() => assets.value?.sidecar);
@@ -68,15 +73,22 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
       <v-spacer />
       <v-btn v-if="finalGlb" :href="api.assetUrl(job.id, finalGlb)" download color="primary" variant="flat" prepend-icon="mdi-cube-outline">GLB</v-btn>
       <v-btn v-if="fbx" :href="api.assetUrl(job.id, fbx)" download variant="tonal" prepend-icon="mdi-download">FBX</v-btn>
+      <v-btn v-if="riggedGlb" :href="api.assetUrl(job.id, riggedGlb)" download color="secondary" variant="flat" prepend-icon="mdi-bone">Rigged GLB</v-btn>
+      <v-btn v-if="riggedFbx" :href="api.assetUrl(job.id, riggedFbx)" download variant="tonal" prepend-icon="mdi-bone">Rigged FBX</v-btn>
       <v-btn v-if="sidecarFile" :href="api.assetUrl(job.id, sidecarFile)" download variant="tonal" prepend-icon="mdi-code-json">Sidecar</v-btn>
     </div>
 
     <v-row dense>
       <v-col cols="12" md="7">
-        <v-card v-if="finalGlb" class="mb-3">
-          <ModelViewer :src="api.assetUrl(job.id, finalGlb)" @loaded="viewerInfo = $event" @error="err = 'preview failed: ' + $event" />
-          <v-card-text v-if="viewerInfo" class="text-caption py-2">
-            Three.js preview · {{ viewerInfo.tris.toLocaleString() }} tris · height {{ viewerInfo.height.toFixed(3) }} m · feet at y = {{ viewerInfo.minY.toFixed(4) }} · drag to orbit
+        <v-card v-if="previewSrc" class="mb-3">
+          <ModelViewer :src="api.assetUrl(job.id, previewSrc)" :wiggle="showRigged && wiggle" @loaded="viewerInfo = $event" @error="err = 'preview failed: ' + $event" />
+          <v-card-text v-if="viewerInfo" class="text-caption py-2 d-flex flex-wrap align-center ga-2">
+            <span>Three.js preview · {{ viewerInfo.tris.toLocaleString() }} tris · height {{ viewerInfo.height.toFixed(3) }} m · feet at y = {{ viewerInfo.minY.toFixed(4) }}<span v-if="viewerInfo.bones"> · {{ viewerInfo.skinned }} SkinnedMesh · {{ viewerInfo.bones }} bones</span> · drag to orbit</span>
+            <v-spacer />
+            <v-btn-toggle v-if="riggedGlb" v-model="showRigged" density="compact" variant="outlined" mandatory>
+              <v-btn :value="false" size="small">static</v-btn><v-btn :value="true" size="small">rigged</v-btn>
+            </v-btn-toggle>
+            <v-switch v-if="riggedGlb && showRigged" v-model="wiggle" label="wiggle bones" density="compact" hide-details color="primary" />
           </v-card-text>
         </v-card>
         <v-card v-else-if="active" class="mb-3"><v-card-text class="text-center py-8"><v-progress-circular indeterminate color="primary" /><div class="mt-3 text-body-2">{{ job.stage }}…</div></v-card-text></v-card>
@@ -101,6 +113,7 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
             <v-list-item title="Textures" :subtitle="(sidecar.textures ?? []).map((t: any) => `${t.name} (${t.mimeType})`).join(', ') || 'vertex colours'" />
             <v-list-item v-if="stage('image')" title="Image stage" :subtitle="`${stage('image').model} · seed ${stage('image').seed} · ${stage('image').steps} steps · ${stage('image').license}`" />
             <v-list-item v-if="stage('3d')" title="3D stage" :subtitle="`${stage('3d').model} · seed ${stage('3d').seed} · res ${stage('3d').resolution} · ${stage('3d').license}`" />
+            <v-list-item v-if="stage('rig')" title="Rig stage" :subtitle="`${stage('rig').model} · ${stage('rig').template} · ${stage('rig').bones} bones, root ${stage('rig').skeleton_root} · ${stage('rig').license}`" />
             <v-list-item v-if="stage('post')" title="Post stage" :subtitle="`${stage('post').tool} · ${stage('post').ops?.join(', ')} · ${stage('post').tris_before?.toLocaleString()} → ${stage('post').tris_after?.toLocaleString()} tris`" />
             <v-list-item title="Profile hash" :subtitle="sidecar.profile_hash?.slice(0, 16) + '…'" />
           </v-list>

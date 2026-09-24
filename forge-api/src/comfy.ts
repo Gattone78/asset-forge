@@ -2,7 +2,8 @@
 // start on demand, stop after idle, and a stop only counts once nvidia-smi shows VRAM back at baseline.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import WebSocket from "ws";
 import { config, paths } from "./config.ts";
@@ -71,10 +72,29 @@ export async function waitForGpuHost(log: (m: string) => void, maxMs = 180_000):
   }
 }
 
+/** UniRigLoadMesh's file list is scanned once when the container starts (comfy-env caches the isolated
+ *  node's schema), so the rig stage always writes to a fixed input/rig-in.glb that must already exist at
+ *  container start. Seed it with any valid GLB (the Phase 1 giraffe sample) if missing. */
+export const RIG_INPUT = "rig-in.glb";
+function ensureRigPlaceholder(log: (m: string) => void): void {
+  const dst = join(config.comfyInput, RIG_INPUT);
+  if (existsSync(dst)) return;
+  const seed = join(config.comfyInput, "giraffe.glb");
+  if (existsSync(seed)) {
+    copyFileSync(seed, dst); log("seeded input/" + RIG_INPUT + " placeholder for the rig stage");
+    // comfy-env caches the isolated node's schema (including UniRigLoadMesh's file list) in the persistent
+    // env; drop it once so the next container start rescans and sees the placeholder.
+    const cache = join(config.data, "comfy", "ce", "envs", "unirig-nodes", ".pixi", "envs", "default", ".metadata_cache.pkl");
+    if (existsSync(cache)) { rmSync(cache); log("cleared comfy-env node metadata cache so the file list rescans"); }
+  }
+  else log("warning: no giraffe.glb to seed input/" + RIG_INPUT + "; rig jobs will fail validation until it exists at container start");
+}
+
 export async function ensureUp(log: (m: string) => void): Promise<void> {
   if (await isUp()) return;
   await waitForGpuHost(log);
   await guardFreeVram();
+  ensureRigPlaceholder(log);
   log("starting comfyui container");
   const t0 = Date.now();
   await nerdctl(composeArgs("up", "-d", "comfyui"));
@@ -114,7 +134,9 @@ export async function run(wf: Workflow, onProgress: OnProgress, timeoutMs = 3_60
   const body: any = await resp.json();
   if (!resp.ok || body.error || (body.node_errors && Object.keys(body.node_errors).length)) {
     ws.close();
-    throw new Error("ComfyUI rejected the workflow: " + JSON.stringify(body.error ?? body.node_errors).slice(0, 2000));
+    const details = Object.entries(body.node_errors ?? {}).map(([id, e]: [string, any]) =>
+      `${titles[id] ?? id}: ${(e.errors ?? []).map((x: any) => `${x.message} (${x.details})`).join("; ")}`).join(" | ");
+    throw new Error(("ComfyUI rejected the workflow: " + (body.error?.message ?? JSON.stringify(body.error)) + (details ? " — " + details : "")).slice(0, 2000));
   }
   const promptId: string = body.prompt_id;
 

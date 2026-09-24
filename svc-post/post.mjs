@@ -21,6 +21,39 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
 const t0 = Date.now();
+const log = (...m) => console.log(`[post ${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...m);
+
+// ---- rig mode: merge UniRig's FBX with the finished asset -> <name>.rigged.glb / .rigged.fbx, sidecar updated ----
+//   node post.mjs --mode rig --rigged raw/rigged.fbx --textured out/<name>.blender.glb --out-dir out/ --name <name>
+//        [--height 0.6] [--yaw-deg 0] [--template articulationxl] [--compression meshopt|none]
+if (args.mode === "rig") {
+  const outDir = resolve(req("out-dir")); const name = req("name"); mkdirSync(outDir, { recursive: true });
+  const glbB = join(outDir, `${name}.rigged.blender.glb`), fbxOut = join(outDir, `${name}.rigged.fbx`), rep = join(outDir, `${name}.rig.json`);
+  const bargs = ["-b", "--python-exit-code", "1", "--python", join(here, "blender", "forge_post.py"), "--", "rigmerge",
+    "--rigged", resolve(req("rigged")), "--out", glbB, "--fbx", fbxOut, "--report", rep, "--thumb", join(outDir, "thumb-rigged.png"),
+    "--height", String(args.height ?? 0.6), "--yaw-deg", String(args["yaw-deg"] ?? 0)];
+  if (args.textured) bargs.push("--textured", resolve(args.textured));
+  run("blender", bargs);
+  const r = JSON.parse(readFileSync(rep, "utf8"));
+  const finalGlb = join(outDir, `${name}.rigged.glb`);
+  if ((args.compression ?? "meshopt") === "meshopt") run("gltf-transform", ["meshopt", glbB, finalGlb, "--level", "medium"]);
+  else copyFileSync(glbB, finalGlb);
+  const g = inspect(finalGlb);
+  // Update the existing sidecar in place.
+  const scPath = join(outDir, `${name}.sidecar.json`);
+  const sc = existsSync(scPath) ? JSON.parse(readFileSync(scPath, "utf8")) : { stages: [], files: {} };
+  sc.stages = [...(sc.stages || []).filter((s) => s.stage !== "rig"), {
+    stage: "rig", model: "VAST-AI/UniRig", source: "ComfyUI-UniRig (comfy-env isolated) UniRigAutoRig", template: args.template ?? "articulationxl",
+    seed: null, bones: r.bones, bone_names: r.bone_names, skeleton_root: "Armature", license: "MIT",
+    tool: `blender@${r.blender}`, ops: r.ops.map((o) => o.op),
+  }];
+  sc.rigged = true;
+  sc.files = { ...(sc.files || {}), rigged_glb: basename(finalGlb), rigged_fbx: basename(fbxOut), thumb_rigged: "thumb-rigged.png" };
+  sc.geometry_rigged = { tris: g.tris, verts: g.verts, height_m: r.after.height_m, bbox_min: r.after.bbox_min, bbox_max: r.after.bbox_max };
+  writeFileSync(scPath, JSON.stringify(sc, null, 1));
+  log(`done: ${r.bones} bones, ${g.tris} tris, ${(statSync(finalGlb).size / 1e6).toFixed(2)} MB -> ${basename(finalGlb)}, ${basename(fbxOut)} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  process.exit(0);
+}
 
 const inp = resolve(req("in"));
 const outDir = resolve(req("out-dir"));
@@ -40,7 +73,6 @@ const decimate = args.decimate || "gltf";
 const yaw = num(args["yaw-deg"], mesh.forward_yaw_deg, 0);
 const normalizeOn = args["no-normalize"] ? false : (mesh.normalize !== false);
 
-const log = (...m) => console.log(`[post ${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...m);
 const report = { name, input: basename(inp), settings: { height, targetTris, maxTris, material, maxTexture, compression, decimate, yaw, normalize: normalizeOn }, steps: [] };
 
 // 1. inspect

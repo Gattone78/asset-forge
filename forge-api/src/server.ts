@@ -36,7 +36,7 @@ app.post("/jobs", async (req, reply) => {
     views: b.views === "multi" ? "multi" : b.views === "front" ? "front" : undefined,
     rerun_of: b.rerun_of, restart_comfy: !!b.restart_comfy,
   };
-  if (jr.rig) return reply.code(501).send({ error: "--rig arrives in Phase 4" });
+  if (jr.rig && type !== "creature") return reply.code(400).send({ error: "rigging applies to creatures only (props and plants get named pivots, req §1)" });
   if (jr.views === "multi") return reply.code(501).send({ error: "views=multi is not effective: ComfyUI core's Trellis2Conditioning treats an image batch as separate objects, so the result equals the front-only run (Phase 2 bake-off, docs/phase-2.md). Multi-view needs the Pixal3D multi-view model; not wired yet." });
   const job = insertJob(randomUUID(), jr);
   return reply.code(201).send(job);
@@ -79,7 +79,7 @@ app.get("/viewer", async (req, reply) => {
   const outDir = join(paths.jobs, job.id, "out");
   const glb = q.file ?? (existsSync(outDir) ? readdirSync(outDir).find((f) => f.endsWith(".glb") && !f.endsWith(".blender.glb")) : undefined);
   if (!glb) return reply.code(404).send({ error: "job has no GLB yet" });
-  return reply.type("text/html").send(viewerHtml(job.id, `out/${glb}`));
+  return reply.type("text/html").send(viewerHtml(job.id, glb.includes("/") ? glb : `out/${glb}`));
 });
 
 for (const action of ["approve", "reject"] as const) {

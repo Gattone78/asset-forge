@@ -423,6 +423,133 @@ def cmd_render(a):
             json.dump(st, f)
 
 
+def cmd_rigmerge(a):
+    """Merge UniRig's rigged FBX with the textured, normalized asset (req §4/§8):
+    - armature root named "Armature", bone names as UniRig produced them (listed in the report)
+    - the baked material from the unrigged GLB is re-applied (UniRig keeps the UV layout)
+    - re-normalized: UniRig rescales to a +-1 box, so feet -> y=0 and height -> target again
+    - exported as GLB with skins and as FBX"""
+    reset()
+    t_all = time.time()
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.fbx(filepath=a.rigged, use_anim=False)
+    fbx_objs = [o for o in bpy.data.objects if o not in before]
+    arms = [o for o in fbx_objs if o.type == "ARMATURE"]
+    meshes = [o for o in fbx_objs if o.type == "MESH"]
+    if not arms or not meshes:
+        raise SystemExit("rigged FBX has no armature or no mesh")
+    arm = arms[0]
+    arm.name = "Armature"
+    arm.data.name = "Armature"
+    # One mesh object (join if UniRig split it), keep its armature modifier / vertex groups.
+    bpy.ops.object.select_all(action="DESELECT")
+    for m in meshes:
+        m.select_set(True)
+    bpy.context.view_layer.objects.active = meshes[0]
+    if len(meshes) > 1:
+        bpy.ops.object.join()
+    mesh = bpy.context.view_layer.objects.active
+    mesh.name = "pivot_root"
+    mesh.data.name = "pivot_root_mesh"
+    if not any(md.type == "ARMATURE" for md in mesh.modifiers):
+        md = mesh.modifiers.new("Armature", "ARMATURE")
+        md.object = arm
+    bones = [b.name for b in arm.data.bones]
+    roots = [b.name for b in arm.data.bones if b.parent is None]
+    report = {"input": os.path.basename(a.rigged), "bones": len(bones), "bone_names": bones, "roots": roots,
+              "before": mesh_stats(mesh), "ops": []}
+    log("rigged fbx: %d bones, mesh %s" % (len(bones), report["before"]))
+
+    # Re-apply the baked material from the unrigged asset (same UV layout).
+    if a.textured:
+        _, tm = import_glb(a.textured)
+        src = tm[0]
+        if src.data.materials and src.data.materials[0] is not None and mesh.data.uv_layers:
+            mat = src.data.materials[0]
+            set_material(mesh, mat)
+            report["ops"].append({"op": "reapply-material", "from": os.path.basename(a.textured), "material": mat.name})
+            log("material re-applied from", os.path.basename(a.textured))
+        else:
+            report["ops"].append({"op": "reapply-material", "skipped": "no material or no UVs"})
+        for o in tm:
+            bpy.data.objects.remove(o, do_unlink=True)
+
+    # Normalize the whole rig: transform the armature (mesh follows as its child), then apply.
+    if not a.no_normalize:
+        if a.yaw_deg:
+            arm.rotation_mode = "XYZ"
+            arm.rotation_euler = (0.0, 0.0, math.radians(a.yaw_deg))
+        bpy.context.view_layer.update()
+        lo, hi = world_bbox(mesh)
+        ext = hi - lo
+        s = a.height / ext.z
+        arm.scale = (arm.scale.x * s, arm.scale.y * s, arm.scale.z * s)
+        bpy.context.view_layer.update()
+        lo, hi = world_bbox(mesh)
+        arm.location = (arm.location.x - (lo.x + hi.x) / 2, arm.location.y - (lo.y + hi.y) / 2, arm.location.z - lo.z)
+        bpy.context.view_layer.update()
+        bpy.ops.object.select_all(action="DESELECT")
+        arm.select_set(True)
+        mesh.select_set(True)
+        bpy.context.view_layer.objects.active = arm
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        report["ops"].append({"op": "normalize", "scale": round(s, 6), "yaw_deg": a.yaw_deg, "height_m": a.height,
+                              "up_axis": "Y", "forward": "-Z", "origin": "feet"})
+    bpy.ops.object.select_all(action="DESELECT")
+    mesh.select_set(True)
+    bpy.context.view_layer.objects.active = mesh
+    # The FBX round trip leaves custom split normals and per-corner UV noise; both make the glTF exporter
+    # split every vertex (3x verts). Clear the normals, quantise UVs, and merge duplicate vertices.
+    if hasattr(mesh.data, "has_custom_normals") and mesh.data.has_custom_normals:
+        bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    for uvl in mesh.data.uv_layers:
+        for d in uvl.data:
+            d.uv = (round(d.uv.x, 5), round(d.uv.y, 5))
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.remove_doubles(threshold=1e-6)
+    bpy.ops.mesh.mark_sharp(clear=True)          # FBX smoothing groups arrive as sharp edges -> exporter splits
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for attr_name in ("sharp_face", "sharp_edge"):
+        attr = mesh.data.attributes.get(attr_name)
+        if attr is not None:
+            mesh.data.attributes.remove(attr)
+    bpy.ops.object.shade_smooth()
+    report["ops"].append({"op": "weld-vertices", "verts": len(mesh.data.vertices)})
+    report["after"] = mesh_stats(mesh)
+
+    if a.thumb:
+        frame_camera(mesh, 215, 18)
+        render_png(a.thumb, a.thumb_size)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    arm.select_set(True)
+    mesh.select_set(True)
+    gltf_kwargs = dict(filepath=a.out, export_format="GLB", use_selection=True, export_yup=True, export_apply=False,
+                       export_texcoords=True, export_normals=True, export_image_format="AUTO",
+                       export_animations=False, export_skins=True, export_lights=False, export_cameras=False)
+    props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
+    if "export_vertex_color" in props:
+        gltf_kwargs["export_vertex_color"] = "NONE"
+    if "export_def_bones" in props:
+        gltf_kwargs["export_def_bones"] = False
+    if "export_influence_nb" in props:
+        gltf_kwargs["export_influence_nb"] = 4
+    bpy.ops.export_scene.gltf(**gltf_kwargs)
+    report["ops"].append({"op": "export-glb", "path": os.path.basename(a.out)})
+    if a.fbx:
+        bpy.ops.export_scene.fbx(filepath=a.fbx, use_selection=True, apply_unit_scale=True, apply_scale_options="FBX_SCALE_ALL",
+                                 axis_forward="-Z", axis_up="Y", path_mode="COPY", embed_textures=True,
+                                 mesh_smooth_type="FACE", add_leaf_bones=False, bake_anim=False)
+        report["ops"].append({"op": "export-fbx", "path": os.path.basename(a.fbx)})
+    report["blender"] = bpy.app.version_string
+    report["seconds"] = round(time.time() - t_all, 1)
+    if a.report:
+        with open(a.report, "w") as f:
+            json.dump(report, f, indent=1)
+    log("rigmerge done: %d bones, %s, %.1fs" % (len(bones), json.dumps(report["after"]), report["seconds"]))
+
+
 ap = argparse.ArgumentParser(prog="forge_post")
 sp = ap.add_subparsers(dest="cmd", required=True)
 p = sp.add_parser("process")
@@ -450,6 +577,18 @@ r.add_argument("--elevation", type=float, default=18.0)
 r.add_argument("--stats")
 r.add_argument("--force-vertex-colors", action="store_true")
 r.set_defaults(fn=cmd_render)
+g = sp.add_parser("rigmerge")
+g.add_argument("--rigged", required=True, help="UniRig FBX (armature + skinned mesh)")
+g.add_argument("--textured", help="unrigged, normalized GLB whose material is re-applied")
+g.add_argument("--out", required=True)
+g.add_argument("--fbx")
+g.add_argument("--thumb")
+g.add_argument("--thumb-size", type=int, default=512)
+g.add_argument("--report")
+g.add_argument("--height", type=float, default=0.6)
+g.add_argument("--yaw-deg", type=float, default=0.0)
+g.add_argument("--no-normalize", action="store_true")
+g.set_defaults(fn=cmd_rigmerge)
 
 args = ap.parse_args(argv)
 args.fn(args)
