@@ -248,7 +248,9 @@ async function stagePost(id: string, req: Job["request"], profile: Profile, refs
   };
   writeFileSync(join(dir, "out", "sidecar-extra.json"), JSON.stringify(extra, null, 1));
   const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
-    "--in", raw["remeshed-painted"], "--hires", raw["painted"], "--out-dir", join(dir, "out"), "--name", name,
+    // Bake source is the closed DC-remeshed mesh, not the raw decoder output: the raw mesh has small holes
+    // and interior faces, and bake rays that fall through them paint the inside colour onto the albedo.
+    "--in", raw["remeshed-painted"], "--hires", raw["remeshed-painted"], "--out-dir", join(dir, "out"), "--name", name,
     "--profile", profile._path, "--sidecar-extra", join(dir, "out", "sidecar-extra.json"),
     "--decimate", "gltf", "--material", profile.mesh.material, "--height", String(req.height_m ?? profile.mesh.target_height_m)];
   log("post: " + [config.nerdctl[0], ...args].join(" "));
