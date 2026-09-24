@@ -3,8 +3,10 @@
 # Install (on gpu): sudo cp deploy/forge-api.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now forge-api
 [Unit]
 Description=Asset Forge API (job queue + worker)
-After=network-online.target containerd.service nvidia-cdi-refresh.service
-Wants=network-online.target nvidia-cdi-refresh.service
+# Ordered after containerd only. The GPU readiness (driver + CDI spec) is checked in code before comfyui
+# is ever started; pulling nvidia-cdi-refresh.service in via Wants= kept this unit from starting at boot.
+After=network-online.target containerd.service
+Wants=network-online.target
 
 [Service]
 User=hqadmin

@@ -200,8 +200,9 @@ def bake_albedo(obj, size, hires=None, cage=0.02, samples=8):
     bpy.context.view_layer.objects.active = obj
     t0 = time.time()
     if hires is not None:
+        # Short rays: long ones reach across cavities (visor rim) and sample the far wall's colour.
         bpy.ops.object.bake(type="EMIT", use_selected_to_active=True, cage_extrusion=cage,
-                            max_ray_distance=cage * 4, use_clear=True)
+                            max_ray_distance=cage * 2, use_clear=True)
     else:
         bpy.ops.object.bake(type="EMIT", use_clear=True)
     log("bake %dpx took %.1fs (selected_to_active=%s)" % (size, time.time() - t0, hires is not None))
@@ -565,7 +566,7 @@ p.add_argument("--no-normalize", action="store_true")
 p.add_argument("--material", choices=["flat-albedo", "pbr", "vertex"], default="flat-albedo")
 p.add_argument("--bake-size", type=int, default=2048)
 p.add_argument("--hires")
-p.add_argument("--cage", type=float, default=0.02, help="cage extrusion as a fraction of height")
+p.add_argument("--cage", type=float, default=0.01, help="cage extrusion as a fraction of height (rays reach 2x this)")
 p.add_argument("--target-tris", type=int, default=0, help="collapse-decimate to this many triangles (0 = off)")
 p.set_defaults(fn=cmd_process)
 r = sp.add_parser("render")
