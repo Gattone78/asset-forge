@@ -119,3 +119,8 @@ sr0     1024M rom
 - **Backups (req 9):** `rsync -a --delete gpu:/srv/forge/jobs gpu:/srv/forge/db <dest>/`.
 - **Idle behaviour verified:** comfyui stops `FORGE_GPU_IDLE_TIMEOUT` (600 s) after the last job; VRAM 2 MiB after.
 - **Outage 2026-09-18 20:02 UTC:** guest journal ends abruptly (no OOM or hung-task record); Proxmox was taken down by Phil afterwards; VM back 2026-09-24 16:53 UTC. Two boot-time job failures (`nvidia-smi` not ready) led to the boot gate in forge-api.
+
+## Phase 3 additions (2026-09-24)
+
+- **Review UI** at `http://192.168.1.51:8080/ui/` (static Nuxt build served by forge-api; `/` redirects there). Rebuild on the VM with `./deploy/build-ui.sh` (npm install + nuxt generate + forge-api restart — only between jobs). Build inputs: `forge-ui/node_modules` (~600 packages) and output `forge-ui/.output/public` (5 MB) live in the VM checkout, not on the root disk.
+- **Caddy route** for `forge.gattonehq.com` → `192.168.1.51:8080` with a LAN + Tailscale `remote_ip` allow-list: snippet in `docs/phase-3.md`, applied by Phil in LXC 106.

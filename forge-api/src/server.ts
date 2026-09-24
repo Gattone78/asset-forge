@@ -1,8 +1,9 @@
 // forge-api: REST per req §6. Plain Fastify, no plugins beyond what ships with it.
 import Fastify from "fastify";
+import fastifyStatic from "@fastify/static";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, normalize } from "node:path";
+import { join, normalize, resolve } from "node:path";
 import { config, paths } from "./config.ts";
 import * as comfy from "./comfy.ts";
 import { countByStatus, getJob, insertJob, listJobs, recoverRunning, updateJob, type JobRequest } from "./db.ts";
@@ -103,6 +104,19 @@ app.post("/jobs/:id/rerun", async (req, reply) => {
   const jr: JobRequest = { ...job.request, seed: sameSeed ? job.request.seed : Number(b.seed), rerun_of: id, restart_comfy: sameSeed };
   return reply.code(201).send(insertJob(randomUUID(), jr));
 });
+
+// Review UI (forge-ui): static SPA generated into forge-ui/.output/public, served at /ui/ with an
+// index.html fallback for client-side routes. Absent until it has been built; the API works without it.
+const uiRoot = resolve(config.repo, "forge-ui", ".output", "public");
+if (existsSync(join(uiRoot, "index.html"))) {
+  app.register(fastifyStatic, { root: uiRoot, prefix: "/ui/", decorateReply: true, index: ["index.html"] });
+  app.get("/", async (_req, reply) => reply.redirect("/ui/"));
+  app.setNotFoundHandler(async (req, reply) => {
+    if (req.method === "GET" && req.url.startsWith("/ui/")) return reply.sendFile("index.html");
+    return reply.code(404).send({ error: "not found" });
+  });
+  app.log.info(`serving forge-ui from ${uiRoot}`);
+}
 
 const failed = recoverRunning();
 if (failed) app.log.warn(`marked ${failed} job(s) left running by a previous process as failed`);
