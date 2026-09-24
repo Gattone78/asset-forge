@@ -89,7 +89,7 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
             <v-col cols="4"><v-text-field v-model="form.height_m" label="Height (m)" type="number" step="0.05" density="comfortable" hint="blank = profile" persistent-hint /></v-col>
             <v-col cols="4"><v-text-field v-model="form.count" label="Candidates" type="number" min="1" max="8" density="comfortable" /></v-col>
           </v-row>
-          <v-switch v-model="form.rig" label="Rig (Phase 4)" color="primary" disabled hide-details />
+          <v-switch v-model="form.rig" label="Auto-rig (creatures only, adds ~30 s)" color="primary" :disabled="form.type !== 'creature'" hide-details />
         </v-card-text>
         <v-card-actions>
           <v-spacer /><v-btn @click="dialog = false">Cancel</v-btn>

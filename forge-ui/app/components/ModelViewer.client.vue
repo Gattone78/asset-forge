@@ -6,8 +6,9 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 
-const props = defineProps<{ src: string }>();
-const emit = defineEmits<{ (e: "loaded", info: { tris: number; height: number; minY: number }): void; (e: "error", msg: string): void }>();
+const props = defineProps<{ src: string; wiggle?: boolean }>();
+const emit = defineEmits<{ (e: "loaded", info: { tris: number; height: number; minY: number; skinned: number; bones: number }): void; (e: "error", msg: string): void }>();
+let bones: THREE.Bone[] = []; let rest: THREE.Euler[] = [];
 const el = ref<HTMLDivElement | null>(null);
 const status = ref("loading…");
 let renderer: THREE.WebGLRenderer | null = null;
@@ -36,12 +37,19 @@ async function setup() {
   const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
   loader.load(props.src, (gltf) => {
     scene.add(gltf.scene);
-    let tris = 0; gltf.scene.traverse((o: any) => { if (o.isMesh) { const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count) / 3; } });
+    let tris = 0, skinned = 0; bones = []; rest = [];
+    gltf.scene.traverse((o: any) => { if (o.isMesh) { const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count) / 3; } if (o.isSkinnedMesh) skinned++; if (o.isBone) { bones.push(o); rest.push(o.rotation.clone()); } });
     const { box, size } = frameFront(camera, controls, gltf.scene);
     status.value = "";
-    emit("loaded", { tris: Math.round(tris), height: size.y, minY: box.min.y });
+    emit("loaded", { tris: Math.round(tris), height: size.y, minY: box.min.y, skinned, bones: bones.length });
   }, undefined, (err) => { status.value = "load failed"; emit("error", String(err)); });
-  const animate = () => { raf = requestAnimationFrame(animate); controls.update(); renderer!.render(scene, camera); };
+  // Procedural bone drive (Phase 4 acceptance): a gentle per-bone sway proves the skeleton deforms the mesh.
+  const animate = () => {
+    raf = requestAnimationFrame(animate);
+    const t = performance.now() / 1000;
+    bones.forEach((b, i) => { b.rotation.z = props.wiggle ? rest[i].z + Math.sin(t * 2 + i * 0.7) * 0.25 : rest[i].z; });
+    controls.update(); renderer!.render(scene, camera);
+  };
   animate();
   const onResize = () => { if (!renderer) return; const w2 = host.clientWidth, h2 = Math.max(260, Math.round(w2 * 0.75)); camera.aspect = w2 / h2; camera.updateProjectionMatrix(); renderer.setSize(w2, h2); };
   addEventListener("resize", onResize);

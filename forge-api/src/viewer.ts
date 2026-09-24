@@ -25,7 +25,13 @@ const url = new URL(location.href); const view = url.searchParams.get("view") ||
 const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
 loader.load(${JSON.stringify(glbUrl)}, (gltf) => {
   scene.add(gltf.scene);
-  let tris = 0; gltf.scene.traverse((o) => { if (o.isMesh) { const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count) / 3; } });
+  let tris = 0, skinned = 0; const bones = [];
+  gltf.scene.traverse((o) => { if (o.isMesh) { const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count) / 3; } if (o.isSkinnedMesh) skinned++; if (o.isBone) bones.push(o); });
+  const pivot = gltf.scene.getObjectByName("pivot_root"); const armature = gltf.scene.getObjectByName("Armature");
+  // wiggle=1: drive every bone procedurally so a rigged asset visibly deforms (acceptance for Phase 4).
+  const wiggle = url.searchParams.get("wiggle") === "1";
+  const rest = bones.map((b) => b.rotation.clone());
+  const drive = (t) => { if (!wiggle) return; bones.forEach((b, i) => { b.rotation.z = rest[i].z + Math.sin(t * 2 + i * 0.7) * 0.25; }); };
   const box = new THREE.Box3().setFromObject(gltf.scene); const size = box.getSize(new THREE.Vector3());
   const c = box.getCenter(new THREE.Vector3());
   const d = Math.max(size.x, size.y, size.z) * 2.2;
@@ -38,9 +44,11 @@ loader.load(${JSON.stringify(glbUrl)}, (gltf) => {
     "bbox max " + box.max.toArray().map(v => v.toFixed(3)).join(", ") + "\\n" +
     "height " + size.y.toFixed(3) + " m   min y " + box.min.y.toFixed(4) + "\\n" +
     "camera on " + (view === "front" ? "-Z (looking at the -Z face = front)" : view) + "\\n" +
-    "extensions " + (gltf.parser.json.extensionsRequired || []).join(", ");
+    "extensions " + (gltf.parser.json.extensionsRequired || []).join(", ") + "\\n" +
+    "skinned meshes " + skinned + "   bones " + bones.length + (bones.length ? " (" + bones.slice(0, 4).map(b => b.name).join(", ") + "…)" : "") + "\\n" +
+    "pivot_root " + (pivot ? "found (" + pivot.type + ")" : "absent") + "   Armature " + (armature ? "found" : "absent") + (wiggle ? "   wiggling bones" : "");
   document.title = "forge viewer ok";
-  (function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+  (function animate() { requestAnimationFrame(animate); drive(performance.now() / 1000); controls.update(); renderer.render(scene, camera); })();
 }, undefined, (err) => { hud.textContent = "LOAD FAILED: " + err; document.title = "forge viewer failed"; });
 addEventListener("resize", () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 </script></body></html>`;
