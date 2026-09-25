@@ -6,7 +6,7 @@ import { createReadStream, existsSync, readFileSync, readdirSync, statSync, writ
 import { join, normalize, resolve } from "node:path";
 import { config, paths } from "./config.ts";
 import * as comfy from "./comfy.ts";
-import { countByStatus, getJob, insertJob, listJobs, recoverRunning, updateJob, type JobRequest } from "./db.ts";
+import { countByStatus, getJob, insertJob, listBatches, listJobs, recoverRunning, updateJob, type JobRequest } from "./db.ts";
 import { listProfiles, loadProfile } from "./profiles.ts";
 import { gpu, isBusy, startWorker } from "./worker.ts";
 import { viewerHtml } from "./viewer.ts";
@@ -29,12 +29,15 @@ app.post("/jobs", async (req, reply) => {
   let profile; try { profile = loadProfile(b.profile); } catch { return reply.code(400).send({ error: `unknown profile ${b.profile}` }); }
   const type = (b.type ?? "creature") as JobRequest["type"];
   if (!["creature", "prop", "plant", "image"].includes(type)) return reply.code(400).send({ error: "bad type" });
-  if (type === "image") return reply.code(501).send({ error: "image jobs arrive in Phase 5" });
+  const img = (b.image ?? {}) as NonNullable<JobRequest["image"]>;
+  const kind = (["sprite", "texture", "tile"].includes(img.kind ?? "") ? img.kind : "sprite") as "sprite" | "texture" | "tile";
   const jr: JobRequest = {
     type, prompt: String(b.prompt), profile: b.profile, seed: Number.isInteger(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 2 ** 31),
     rig: !!b.rig, count: Math.min(8, Math.max(1, Number(b.count ?? profile.image.count ?? 4))), height_m: b.height_m ? Number(b.height_m) : undefined,
     views: b.views === "multi" ? "multi" : b.views === "front" ? "front" : undefined,
     rerun_of: b.rerun_of, restart_comfy: !!b.restart_comfy,
+    batch: b.batch ? String(b.batch).slice(0, 64) : undefined,
+    image: type === "image" ? { kind, transparent: img.transparent ?? kind === "sprite", seamless: img.seamless ?? kind !== "sprite", size: img.size ? Number(img.size) : undefined } : undefined,
   };
   if (jr.rig && type !== "creature") return reply.code(400).send({ error: "rigging applies to creatures only (props and plants get named pivots, req §1)" });
   if (jr.views === "multi") return reply.code(501).send({ error: "views=multi is not effective: ComfyUI core's Trellis2Conditioning treats an image batch as separate objects, so the result equals the front-only run (Phase 2 bake-off, docs/phase-2.md). Multi-view needs the Pixal3D multi-view model; not wired yet." });
@@ -43,8 +46,9 @@ app.post("/jobs", async (req, reply) => {
 });
 app.get("/jobs", async (req) => {
   const q = req.query as Record<string, string>;
-  return listJobs({ status: q.status, profile: q.profile, limit: q.limit ? Number(q.limit) : undefined });
+  return listJobs({ status: q.status, profile: q.profile, batch: q.batch, type: q.type, limit: q.limit ? Number(q.limit) : undefined });
 });
+app.get("/batches", async () => listBatches());
 app.get("/jobs/:id", async (req, reply) => {
   const job = getJob((req.params as any).id);
   return job ?? reply.code(404).send({ error: "no such job" });

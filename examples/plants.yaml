@@ -1,0 +1,17 @@
+# forge job batch examples/plants.yaml
+# One job per prompt, all sharing the profile and seeds base..base+N-1 (req §5 / §8). Same style, ten plants.
+type: plant
+profile: meadowbots-flat
+seed: 500
+batch: plants-set-1
+prompts:
+  - a small round bush with pink berries
+  - a tall thin sunflower with a smiling face
+  - a chubby mushroom with red spotted cap
+  - a spiky little cactus in a clay pot
+  - a fern with big soft fronds
+  - a tulip with three pastel blooms
+  - a squat pumpkin plant with one pumpkin
+  - a baby oak sapling with round leaves
+  - a lily pad with a single white flower
+  - a tuft of tall grass with seed heads

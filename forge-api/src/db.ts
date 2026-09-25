@@ -16,6 +16,8 @@ export interface JobRequest {
   views?: "front" | "multi";
   rerun_of?: string;
   restart_comfy?: boolean;
+  batch?: string;
+  image?: { kind?: "sprite" | "texture" | "tile"; transparent?: boolean; seamless?: boolean; size?: number };
 }
 export interface Job {
   id: string;
@@ -46,6 +48,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS jobs (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, created_at);`);
+// Phase 5: batch label column (older databases get it added in place).
+if (!(db.prepare("PRAGMA table_info(jobs)").all() as any[]).some((c) => c.name === "batch")) db.exec("ALTER TABLE jobs ADD COLUMN batch TEXT");
+db.exec("CREATE INDEX IF NOT EXISTS jobs_batch ON jobs(batch)");
 
 const row2job = (r: any): Job => ({
   id: r.id, status: r.status, stage: r.stage, progress: r.progress, error: r.error,
@@ -55,8 +60,8 @@ const row2job = (r: any): Job => ({
 
 export function insertJob(id: string, req: JobRequest): Job {
   const now = new Date().toISOString();
-  db.prepare(`INSERT INTO jobs (id,status,stage,progress,request,type,profile,created_at,updated_at)
-              VALUES (?,?,?,?,?,?,?,?,?)`).run(id, "queued", "queued", 0, JSON.stringify(req), req.type, req.profile, now, now);
+  db.prepare(`INSERT INTO jobs (id,status,stage,progress,request,type,profile,batch,created_at,updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?)`).run(id, "queued", "queued", 0, JSON.stringify(req), req.type, req.profile, req.batch ?? null, now, now);
   return getJob(id) as Job;
 }
 export function getJob(id: string): Job | null {
@@ -71,10 +76,12 @@ export function updateJob(id: string, patch: Partial<Pick<Job, "status" | "stage
   sets.push("updated_at = ?"); vals.push(new Date().toISOString()); vals.push(id);
   db.prepare(`UPDATE jobs SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
 }
-export function listJobs(filter: { status?: string; game?: string; profile?: string; limit?: number }): Job[] {
+export function listJobs(filter: { status?: string; game?: string; profile?: string; batch?: string; type?: string; limit?: number }): Job[] {
   const where: string[] = []; const vals: unknown[] = [];
   if (filter.status) { where.push("status = ?"); vals.push(filter.status); }
   if (filter.profile) { where.push("profile = ?"); vals.push(filter.profile); }
+  if (filter.batch) { where.push("batch = ?"); vals.push(filter.batch); }
+  if (filter.type) { where.push("type = ?"); vals.push(filter.type); }
   const sql = `SELECT * FROM jobs ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC LIMIT ?`;
   vals.push(filter.limit ?? 100);
   return db.prepare(sql).all(...vals).map(row2job);
@@ -82,6 +89,9 @@ export function listJobs(filter: { status?: string; game?: string; profile?: str
 export function nextQueued(): Job | null {
   const r = db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1").get();
   return r ? row2job(r) : null;
+}
+export function listBatches(): { batch: string; n: number; first: string }[] {
+  return db.prepare("SELECT batch, COUNT(*) n, MIN(created_at) first FROM jobs WHERE batch IS NOT NULL GROUP BY batch ORDER BY first DESC").all() as any[];
 }
 export function countByStatus(): Record<string, number> {
   const out: Record<string, number> = {};

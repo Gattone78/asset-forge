@@ -7,6 +7,9 @@ image:
   size: 1024
   steps: 4            # schnell
   views: front        # front | multi  (Phase 2 bake-off decides the default; see docs/phase-2.md)
+  sprite_prompt: "2D game sprite, single subject, centered, isolated on a plain white background, no shadow"
+  texture_style: "soft pastel colors, simple rounded shapes, low-detail toy-like material, only the surface material, no characters, no animals, no objects"
+  texture_prompt: "seamless tileable texture, top-down, flat even lighting, no shadows, no border, repeating pattern"
 mesh:
   target_tris: 12000  # decimate target; hard max 20000
   max_tris: 20000
