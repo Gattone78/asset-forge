@@ -295,9 +295,30 @@ Purpose: short promotional clips for Meadowbots and future games — not runtime
 
 **Accept:** `forge job video "…" --profile meadowbots-flat` yields a 5 s clip Phil can preview and download from the UI; three clips stitch into a trailer MP4 that plays on a phone; `comfyui` stops on idle as usual.
 
+### Phase 7 — Audio (SFX, music, narration) — PROPOSED 2026-09-25, Phil to confirm before any download
+
+Purpose: sound for Meadowbots and its promo clips — runtime sound effects, trailer/menu music, and spoken narration — all local, ComfyUI core nodes wherever they exist (the `forge/comfyui:0.1.0` image already ships ACE-Step 1.5 and Stable Audio 3 support and the audio save/mix nodes).
+
+- **Models (proposed; each passes a Blackwell gate before its job type is built):**
+  - **Music: ACE-Step 1.5 Turbo** (MIT, Comfy-Org repackage: turbo AIO checkpoint or split diffusion + Qwen text encoder + VAE; core nodes `TextEncodeAceStepAudio15` / `EmptyAceStep15LatentAudio`). Tags + optional lyrics, bpm/key/time-signature controls, seconds-scale generation for minutes of audio. Instrumental by default.
+  - **SFX: Stable Audio 3.0 Small-SFX** (Stability AI Community License: outputs are the user's and commercial use is allowed under US$1M annual revenue; Comfy-Org repackage + `t5gemma` text encoder; core `StableAudio3` support). Up to 2 min, 44.1 kHz stereo. Alternative if the licence is unwanted: MMAudio (MIT, kijai custom node, text- or video-to-audio) — also the candidate for clip-synchronised foley later.
+  - **Narration: Kokoro-82M** (Apache-2.0, CPU, fixed voice set, no cloning) in a new **`svc-audio`** container (Python + kokoro + ffmpeg); never touches ComfyUI or the GPU. Option: **Chatterbox** (MIT, GPU, voice cloning from ~5 s of Phil's voice) as a second engine in the same container — decide at spec confirmation. big-cat's own Chatterbox stays untouched.
+- **Gates:** `workflows/test-music.json` (30 s instrumental at seed 1) and `workflows/test-sfx.json` (5 s effect at seed 1) must produce **non-silent** audio (mean level above −50 dBFS and spectral content, checked in post); record wall time and VRAM peak. `svc-audio` gate: one sentence → non-silent WAV of plausible length.
+- **Job types:**
+  - `sfx {prompt, profile, seed, duration_s (default 4), count (default 4 variations)}` → `out/<name>-N.wav` + `.ogg` (Vorbis, the runtime format) + waveform PNG per variation, `thumb.png` = waveform of #1.
+  - `music {prompt (tags), lyrics?, profile, seed, duration_s (default 30), bpm?, key?, loop (default false)}` → `.wav` + `.mp3` + `.ogg` + waveform. `loop: true` crossfades the tail into the head (like seamless textures) and reports the seam level.
+  - `speech {text, profile, voice?, speed?}` → `.wav` + `.ogg` + waveform; CPU only, never starts comfyui.
+  - `trailer` gains `music: <music job id>`, `narration: [{speech: <job id>, at_s}]`: ffmpeg mixes music (fade-out, ducked under narration with `sidechaincompress`) and encodes AAC into the MP4 → a trailer **with sound** that plays on a phone.
+- **Post (svc-post, ffmpeg):** peak-normalise to −1 dBFS, measure integrated loudness (EBU R128) and true peak, non-silence check, waveform PNG (`showwavespic`), sidecar `audio {sample_rate, channels, duration_s, lufs, peak_dbfs, non_silent}` + stage (model, seed, steps, licence).
+- **Profile:** `audio:` block — `sfx_style` and `music_style` prompt suffixes, `sample_rate 44100`, `sfx_channels mono|stereo`, `voice`, loudness targets.
+- **UI:** `sfx`/`music`/`speech` in the new-job dialog; job page shows `<audio controls>` per file with its waveform; trailer dialog/yaml accepts music + narration.
+- **CLI:** `forge job sfx|music|speech "…"`, trailer yaml keys `music:` / `narration:`.
+
+**Accept:** `forge job sfx "…"` yields 4 variations Phil can audition and download as OGG from the UI; `forge job music "…" --duration 30 --loop` yields a loop that plays seamlessly; a trailer built from three clips + a music job + a speech job plays on a phone with sound; comfyui stops on idle; speech jobs never start comfyui.
+
 ### Later (not v1, do not build yet)
 
-Audio (SFX/music/TTS, including trailer soundtracks), MCP server over the REST API, runtime generation, Kubernetes deployment, multi-GPU scheduling.
+Clip-synchronised foley (MMAudio video-to-audio), voice cloning if not chosen in Phase 7, MCP server over the REST API, runtime generation, Kubernetes deployment, multi-GPU scheduling.
 
 ---
 
