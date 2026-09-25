@@ -82,6 +82,19 @@ switch (cmd) {
       const j = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
       console.log(j.id); break;
     }
+    if (sub === "promo" || sub === "model") {
+      // forge job promo --photo <upload id> "prompt" --style pixar [--script "…"] [--narration-at 1] [--no-music] [--no-foley] [--music-prompt "…"] [--duration 5] [--aspect 16:9] [--title "…"]
+      // forge job model --photos <id>[,<id>…] "prompt" --style pixar [--no-rig] [--height 0.6]
+      const prompt = rest.join(" "); if (!prompt) die("prompt required");
+      const style = flags.style ?? "toy";
+      const body = { type: sub, prompt, profile: flags.profile ?? "meadowbots-flat", seed: flags.seed !== undefined ? Number(flags.seed) : undefined, batch: flags.batch,
+        rig: sub === "model" ? !flags["no-rig"] : false, height_m: flags.height ? Number(flags.height) : undefined };
+      if (sub === "promo") { if (!flags.photo) die("--photo <upload id> required"); body.promo = { photo: String(flags.photo), style, duration_s: flags.duration ? Number(flags.duration) : undefined, aspect: flags.aspect,
+        script: flags.script, narration_at_s: flags["narration-at"] ? Number(flags["narration-at"]) : undefined, music: !flags["no-music"], music_prompt: flags["music-prompt"], foley: !flags["no-foley"], title: flags.title }; }
+      else { if (!flags.photos) die("--photos <upload id>[,<id>…] required"); body.model = { photos: String(flags.photos).split(",").map((s) => s.trim()).filter(Boolean), style }; }
+      const j = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
+      console.log(j.id); break;
+    }
     if (sub === "foley") {
       const clip = rest[0]; if (!clip) die('usage: forge job foley <video job id> ["what it should sound like"] [--seed N] [--profile P]');
       const body = { type: "foley", prompt: rest.slice(1).join(" "), profile: flags.profile ?? "meadowbots-flat", seed: flags.seed !== undefined ? Number(flags.seed) : undefined, batch: flags.batch, audio: { clip } };
@@ -102,6 +115,19 @@ switch (cmd) {
     const j = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
     console.log(j.id); break;
   }
+  case "upload": {
+    // forge upload photo.jpg [more…]  -> prints one upload id per file (use as --photo <id> / --photos a,b)
+    const files = [sub, ...rest].filter(Boolean); if (!files.length) die("usage: forge upload <image file…>");
+    for (const f of files) {
+      const buf = readFileSync(f); const ext = f.toLowerCase().split(".").pop();
+      const type = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+      const r = await fetch(`${URL_}/uploads?name=${encodeURIComponent(basename(f))}`, { method: "POST", headers: { "content-type": type }, body: buf });
+      const j = await r.json(); if (!r.ok) die(`HTTP ${r.status}: ${JSON.stringify(j)}`);
+      console.log(`${j.id}  ${j.width}x${j.height}  ${(j.bytes / 1e6).toFixed(2)} MB  ${j.name}`);
+    }
+    break;
+  }
+  case "uploads": for (const u of await api("/uploads")) console.log(`${u.id}  ${u.width}x${u.height}  ${(u.bytes / 1e6).toFixed(2)} MB  ${u.uploaded_at}  ${u.name}`); break;
   case "status": { if (!sub) die("usage: forge status <id>"); console.log(fmtJob(await api(`/jobs/${sub}`))); break; }
   case "watch": {
     if (!sub) die("usage: forge watch <id>");
@@ -136,5 +162,5 @@ switch (cmd) {
   case "batches": for (const b of await api("/batches")) console.log(`${b.batch}  ${b.n} job(s)  ${b.first}`); break;
   case "health": console.log(JSON.stringify(await api("/health"), null, 1)); break;
   case "profiles": for (const p of await api("/profiles")) console.log(`${p.name}  (${p.game})  ${p.file}`); break;
-  default: die("commands: job (creature|prop|plant|image|video|sfx|music|speech|foley|batch|trailer), status, watch, list, get, approve, reject, rerun, batches, health, profiles");
+  default: die("commands: job (creature|prop|plant|image|video|sfx|music|speech|foley|promo|model|batch|trailer), upload, uploads, status, watch, list, get, approve, reject, rerun, batches, health, profiles");
 }

@@ -85,6 +85,15 @@ async function runJob(job0: Job): Promise<void> {
     set("starting", 0);
     await comfy.ensureUp(log);
 
+    if (req.type === "promo") {
+      // ---- promo (Phase 8): photo -> restyle -> clip -> foley -> narration -> music -> mix, all in one job ----
+      const name = `${profile.game}-promo-${slug(req.prompt)}-${id.slice(0, 6)}`;
+      const res = await stagePromo(id, req, profile, name, log, set);
+      updateJob(id, { status: "review", stage: "review", progress: 1, result: { name, files: res.files, video: res.video, seconds: (Date.now() - t0) / 1000 } });
+      log(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s -> ${name}`);
+      return;
+    }
+
     if (req.type === "sfx" || req.type === "music" || req.type === "foley") {
       // ---- audio (Phase 7): Stable Audio 3 (sfx), ACE-Step 1.5 (music) or MMAudio (foley from a clip), then ffmpeg post ----
       set(req.type, 0.1);
@@ -118,7 +127,8 @@ async function runJob(job0: Job): Promise<void> {
     // ---- stage 1: reference images ----
     set("refs", 0.05);
     const views = req.views ?? profile.image.views ?? "front";
-    const refs = await stageRefs(id, req, profile, views, log);
+    // Phase 8 `model`: the references are the uploaded photos (restyled unless the style says otherwise), not FLUX candidates.
+    const refs = req.type === "model" ? await stageRefsFromPhotos(id, req, profile, log, (p) => set("refs", 0.05 + 0.25 * p)) : await stageRefs(id, req, profile, views, log);
     set("refs", 0.3);
 
     // ---- stage 2: image -> 3D ----
@@ -246,8 +256,9 @@ async function stage3d(id: string, req: Job["request"], profile: Profile, refs: 
   return out;
 }
 
-/** Resolve an init_image reference: "<jobid>" (its thumb), "<jobid>/<relative path>" or an absolute path under FORGE_DATA. */
+/** Resolve an init_image reference: "upload:<id>" (Phase 8 upload), "<jobid>" (its thumb), "<jobid>/<relative path>" or an absolute path under FORGE_DATA. */
 function resolveInitImage(ref: string): string {
+  if (ref.startsWith("upload:")) return uploadPath(ref.slice(7));
   if (ref.startsWith("/")) { const p = resolve(ref); if (!p.startsWith(config.data) || !existsSync(p)) throw new Error("init_image path not found or outside " + config.data); return p; }
   const [jid, ...rest] = ref.split("/");
   const src = getJob(jid);
@@ -256,6 +267,169 @@ function resolveInitImage(ref: string): string {
   const p = join(jobDir(src.id), rel);
   if (!existsSync(p)) throw new Error("init_image file not found: " + ref);
   return p;
+}
+
+function uploadPath(id: string): string {
+  const p = join(paths.uploads, `${id.replace(/[^0-9a-f-]/g, "")}.png`);
+  if (!existsSync(p)) throw new Error("upload not found: " + id);
+  return p;
+}
+type Style = { restyle?: string; video?: string; three_d?: string; music?: string; sfx?: string };
+function styleOf(profile: Profile, key: string): Style {
+  const styles = ((profile as any).styles ?? {}) as Record<string, Style>;
+  if (!styles[key]) throw new Error(`unknown style "${key}"; profile ${profile.name} has: ${Object.keys(styles).join(", ") || "none"}`);
+  return styles[key];
+}
+
+/** Restyle (Phase 8): Qwen-Image-Edit 2511 turns a photo into the style's look. Returns the styled PNG path (in the job's refs/). */
+async function stageRestyle(id: string, photo: string, style: Style, styleKey: string, seed: number, outName: string, log: (m: string) => void): Promise<{ file: string; seconds: number }> {
+  const dir = jobDir(id);
+  const inDir = join(config.comfyInput, "jobs", id); mkdirSync(inDir, { recursive: true });
+  const inName = `${outName}-photo.png`; copyFileSync(photo, join(inDir, inName));
+  const wf = loadWorkflow("restyle.json");
+  setInput(wf, "Photo", "image", `jobs/${id}/${inName}`);
+  setInput(wf, "Instruction", "prompt", style.restyle!);
+  setInput(wf, "Sampler", "seed", seed);
+  setInput(wf, "Save", "filename_prefix", `jobs/${id}/refs/${outName}`);
+  const r = await comfy.run(wf, () => {});
+  const srcOut = join(config.comfyOutput, "jobs", id, "refs");
+  const produced = existsSync(srcOut) ? readdirSync(srcOut).filter((f) => f.startsWith(outName) && f.endsWith(".png")) : [];
+  if (!produced.length) throw new Error("restyle produced no image");
+  const dst = join(dir, "refs", `${outName}.png`);
+  renameSync(join(srcOut, produced[0]), dst);
+  rmSync(join(config.comfyOutput, "jobs", id), { recursive: true, force: true });
+  log(`restyle (${styleKey}): ${r.seconds.toFixed(1)}s -> refs/${outName}.png`);
+  return { file: dst, seconds: r.seconds };
+}
+
+/** Refs from uploaded photos (Phase 8 `model`): each photo (restyled unless the style has no instruction) is cut out with BiRefNet and scored like a FLUX candidate. */
+async function stageRefsFromPhotos(id: string, req: Job["request"], profile: Profile, log: (m: string) => void, onP: (p: number) => void): Promise<Refs> {
+  const m = req.model!; const style = styleOf(profile, m.style);
+  const dir = jobDir(id); const refDir = join(dir, "refs");
+  const inDir = join(config.comfyInput, "jobs", id); mkdirSync(inDir, { recursive: true });
+  const stages: any[] = [];
+  const cut: { file: string; photo: string }[] = [];
+  for (let i = 0; i < m.photos.length; i++) {
+    const photo = uploadPath(m.photos[i]);
+    copyFileSync(photo, join(refDir, `photo-${i + 1}.png`));
+    let src = photo;
+    if (style.restyle) { const r = await stageRestyle(id, photo, style, m.style, req.seed + i, `styled-${i + 1}`, log); src = r.file; stages.push({ stage: "restyle", index: i + 1, seconds: r.seconds }); }
+    const inName = `cut-in-${i + 1}.png`; copyFileSync(src, join(inDir, inName));
+    const wf = loadWorkflow("photo-cutout.json");
+    setInput(wf, "Photo", "image", `jobs/${id}/${inName}`);
+    setInput(wf, "Fit", "width", profile.image.size); setInput(wf, "Fit", "height", profile.image.size);
+    setInput(wf, "Save", "filename_prefix", `jobs/${id}/refs/front-${i + 1}`);
+    const r = await comfy.run(wf, () => {});
+    const srcOut = join(config.comfyOutput, "jobs", id, "refs");
+    const produced = readdirSync(srcOut).filter((f) => f.startsWith(`front-${i + 1}`) && f.endsWith(".png"));
+    if (!produced.length) throw new Error("cutout produced no image");
+    const dst = join(refDir, `front-${i + 1}.png`); renameSync(join(srcOut, produced[0]), dst);
+    rmSync(join(config.comfyOutput, "jobs", id), { recursive: true, force: true });
+    log(`cutout ${i + 1}/${m.photos.length}: ${r.seconds.toFixed(1)}s`);
+    cut.push({ file: dst, photo: m.photos[i] });
+    onP((i + 1) / m.photos.length);
+  }
+  const candidates = [] as any[];
+  for (const c of cut) { const s = await subjectScore(c.file); candidates.push({ file: basename(c.file), photo: c.photo, ...s }); }
+  candidates.sort((a, b) => b.score - a.score);
+  log(`picked ${candidates[0].file} (score ${candidates[0].score.toFixed(3)}) from ${candidates.length} photo(s)`);
+  const stagePath = join(inDir, "ref-front.png"); copyFileSync(join(refDir, candidates[0].file), stagePath);
+  writeFileSync(join(refDir, "candidates.json"), JSON.stringify({ seed: req.seed, views: "front", picked: candidates[0].file, candidates, style: m.style, restyle_stages: stages }, null, 1));
+  return { front: `jobs/${id}/ref-front.png`, files: readdirSync(refDir), candidates };
+}
+
+/** Promo (Phase 8): one job that chains restyle -> video -> foley -> speech -> music -> mix. */
+async function stagePromo(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void, set: (stage: string, p: number) => void): Promise<{ files: string[]; video: any }> {
+  const p = req.promo!; const style = styleOf(profile, p.style);
+  const dir = jobDir(id); const out = join(dir, "out");
+  const photo = uploadPath(p.photo); copyFileSync(photo, join(dir, "refs", "photo.png"));
+  const stages: any[] = [];
+  // 1. restyle
+  set("restyle", 0.05);
+  let still = photo;
+  if (style.restyle) { const r = await stageRestyle(id, photo, style, p.style, req.seed, "styled", log); still = r.file; stages.push({ stage: "restyle", model: "Qwen/Qwen-Image-Edit-2511", source: "Comfy-Org/Qwen-Image-Edit_ComfyUI fp8mixed (ComfyUI core)", style: p.style, instruction: style.restyle, seed: req.seed, steps: 40, cfg: 3.0, license: "Apache-2.0", seconds: Number(r.seconds.toFixed(1)) }); }
+  else log(`restyle: skipped (style ${p.style})`);
+  copyFileSync(still, join(out, "styled.png"));
+  // 2. video (image-to-video from the styled still), via the existing video stage on a synthetic request
+  set("video", 0.15);
+  const vreq: Job["request"] = { ...req, type: "video", prompt: `${req.prompt}, ${style.video ?? ""}`.replace(/, $/, ""), video: { init_image: still, aspect: p.aspect ?? "16:9", duration_s: p.duration_s, fast: true } };
+  const clipName = `${name}-clip`;
+  const v = await stageVideo(id, vreq, profile, clipName, log, (q) => set("video", 0.15 + 0.35 * q));
+  const clip = join(out, `${clipName}.mp4`);
+  const clipDur = Number(v.video?.duration_s ?? p.duration_s ?? 5);
+  stages.push(...(JSON.parse(readFileSync(join(out, `${clipName}.sidecar.json`), "utf8")).stages ?? []));
+  // 3. foley (MMAudio) on the clip -> a copy of the clip with sound
+  let clipForMix = clip;
+  if (p.foley !== false) {
+    set("foley", 0.5);
+    const fdir = join(out, "foley"); mkdirSync(fdir, { recursive: true });
+    const r = await runFoley(id, clip, `${req.prompt}, ${style.sfx ?? ""}`.replace(/, $/, ""), req.seed + 1, clipDur, fdir, `${name}-foley`, log);
+    clipForMix = r.mp4; stages.push(r.stage);
+  }
+  // 4. narration (Kokoro, CPU) from the script
+  let narration: string | null = null;
+  if (p.script) {
+    set("speech", 0.62);
+    const sdir = join(out, "speech"); mkdirSync(sdir, { recursive: true });
+    const pa = ((profile as any).audio ?? {}) as Record<string, any>;
+    const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcAudioImage,
+      "--text", p.script, "--voice", pa.voice ?? "af_heart", "--speed", String(pa.voice_speed ?? 1.0), "--out-dir", sdir, "--name", `${name}-speech`];
+    const t0 = Date.now(); await runContainer(args, join(dir, "log.txt"), "svc-audio");
+    const sc = JSON.parse(readFileSync(join(sdir, `${name}-speech.sidecar.json`), "utf8"));
+    narration = join(sdir, sc.files.wav);
+    stages.push({ stage: "speech", model: "hexgrad/Kokoro-82M", voice: pa.voice ?? "af_heart", duration_s: sc.audio.duration_s, license: "Apache-2.0", seconds: Number(((Date.now() - t0) / 1000).toFixed(1)) });
+    log(`speech: ${sc.audio.duration_s}s`);
+  }
+  // 5. music (ACE-Step) at least as long as the clip + card
+  let music: string | null = null;
+  const pa = ((profile as any).audio ?? {}) as Record<string, any>;
+  if (p.music !== false) {
+    set("music", 0.7);
+    const mdir = join(out, "music"); mkdirSync(mdir, { recursive: true });
+    const mreq: Job["request"] = { ...req, type: "music", prompt: p.music_prompt ?? `${req.prompt}, ${style.music ?? pa.music_style ?? ""}`.replace(/, $/, ""), audio: { duration_s: Math.max(8, Math.ceil(clipDur + (p.title ? 2 : 0) + 2)), loop: false } };
+    const r = await stageAudio(id, mreq, profile, `${name}-music`, log, () => {}, mdir);
+    music = join(mdir, r.files.find((f) => f.endsWith(".wav"))!);
+    stages.push(...r.stages);
+  }
+  // 6. mix (svc-post trailer mode: optional title card, the clip with its foley, music ducked under the narration)
+  set("mix", 0.9);
+  const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
+    "--mode", "trailer", "--clips", clipForMix, "--out-dir", out, "--name", name, "--card", p.title ? "2" : "0", "--xfade", "0.5",
+    ...(p.title ? ["--title", p.title] : []), ...(music ? ["--music", music, "--music-db", String(pa.music_db ?? -14)] : []),
+    ...(narration ? ["--narration", `${narration}@${(p.narration_at_s ?? 1.0) + (p.title ? 2 : 0)}`] : [])];
+  const t1 = Date.now();
+  await runContainer(args, join(dir, "log.txt"), "svc-post mix");
+  const sc = JSON.parse(readFileSync(join(out, `${name}.sidecar.json`), "utf8"));
+  sc.job_id = id; sc.game = profile.game; sc.profile = profile.name; sc.profile_hash = profile._hash; sc.prompt = req.prompt; sc.request = req; sc.batch = req.batch ?? null;
+  sc.promo = { style: p.style, photo: p.photo, styled: "styled.png", clip: basename(clip), foley: p.foley !== false, narration: !!narration, music: !!music };
+  sc.stages = stages; sc.video = { width: sc.trailer.width, height: sc.trailer.height, fps: sc.trailer.fps, duration_s: sc.trailer.duration_s, non_blank: true };
+  writeFileSync(join(out, `${name}.sidecar.json`), JSON.stringify(sc, null, 1));
+  rmSync(join(out, `${clipName}.sidecar.json`), { force: true });
+  log(`mix: ${sc.trailer.duration_s}s with ${[p.foley !== false ? "foley" : null, narration ? "narration" : null, music ? "music" : null].filter(Boolean).join(" + ") || "no sound"} in ${((Date.now() - t1) / 1000).toFixed(1)}s`);
+  return { files: readdirSync(out), video: sc.video };
+}
+
+/** MMAudio foley over a clip file (shared by the foley job type's pipeline and promo). Returns the muxed mp4. */
+async function runFoley(id: string, clip: string, prompt: string, seed: number, duration: number, outDir: string, name: string, log: (m: string) => void): Promise<{ mp4: string; stage: any }> {
+  const inDir = join(config.comfyInput, "jobs", id); mkdirSync(inDir, { recursive: true });
+  const raw25 = join(inDir, "clip25.mp4");
+  await runContainer([...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, "--entrypoint", "ffmpeg", config.svcPostImage,
+    "-y", "-v", "error", "-i", clip, "-r", "25", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-an", raw25], join(jobDir(id), "log.txt"), "ffmpeg 25fps");
+  const wf = loadWorkflow("video-to-audio.json");
+  setInput(wf, "Load clip", "file", `jobs/${id}/clip25.mp4`);
+  setInput(wf, "Sampler", "prompt", prompt); setInput(wf, "Sampler", "duration", duration); setInput(wf, "Sampler", "seed", seed);
+  setInput(wf, "Save audio", "filename_prefix", `jobs/${id}/out/foley`);
+  const r = await comfy.run(wf, () => {});
+  const srcOut = join(config.comfyOutput, "jobs", id, "out");
+  const produced = existsSync(srcOut) ? readdirSync(srcOut).filter((f) => /\.(flac|wav)$/.test(f)) : [];
+  if (!produced.length) throw new Error("foley produced no audio");
+  const rawA = join(outDir, "foley-comfyui.flac"); renameSync(join(srcOut, produced[0]), rawA);
+  rmSync(join(config.comfyOutput, "jobs", id), { recursive: true, force: true });
+  await runContainer([...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
+    "--mode", "audio", "--in", rawA, "--out-dir", outDir, "--name", name, "--kind", "foley", "--channels", "stereo", "--clip", clip], join(jobDir(id), "log.txt"), "svc-post audio");
+  rmSync(rawA, { force: true });
+  log(`foley: ${r.seconds.toFixed(1)}s on the GPU`);
+  return { mp4: join(outDir, `${name}.mp4`), stage: { stage: "audio", kind: "foley", model: "hkchengrex/MMAudio large_44k_v2", seed, steps: 25, cfg: 4.5, duration_s: duration, license: "MIT", seconds: Number(r.seconds.toFixed(1)) } };
 }
 
 /** Video stage (Phase 6): Wan 2.2 14B via text-to-video.json or image-to-video.json, then svc-post video mode. */
@@ -379,18 +553,18 @@ async function stageAudio(id: string, req: Job["request"], profile: Profile, nam
   rmSync(join(config.comfyInput, "jobs", id), { recursive: true, force: true });
   const extra = { job_id: id, game: profile.game, profile: profile.name, profile_hash: profile._hash, prompt: req.prompt, request: req, batch: req.batch ?? null,
     stages: [{ ...stage, seed: req.seed, duration_s: duration, count: raws.length, seconds: Number(r.seconds.toFixed(1)) }] };
-  writeFileSync(join(dir, "out", "sidecar-extra.json"), JSON.stringify(extra, null, 1));
+  writeFileSync(join(out, "sidecar-extra.json"), JSON.stringify(extra, null, 1));
   const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
-    "--mode", "audio", "--in", raws.join(","), "--out-dir", join(dir, "out"), "--name", name, "--kind", kind,
+    "--mode", "audio", "--in", raws.join(","), "--out-dir", out, "--name", name, "--kind", kind,
     "--sample-rate", String(a.sample_rate ?? pa.sample_rate ?? 44100), "--channels", a.channels ?? (kind === "sfx" ? pa.sfx_channels ?? "mono" : "stereo"),
-    ...(a.loop ? ["--loop"] : []), ...(clipRaw ? ["--clip", clipRaw] : []), "--sidecar-extra", join(dir, "out", "sidecar-extra.json")];
+    ...(a.loop ? ["--loop"] : []), ...(clipRaw ? ["--clip", clipRaw] : []), "--sidecar-extra", join(out, "sidecar-extra.json")];
   const t1 = Date.now();
   await runContainer(args, join(dir, "log.txt"), "svc-post audio");
-  rmSync(join(dir, "out", "sidecar-extra.json"), { force: true });
-  const sc = JSON.parse(readFileSync(join(dir, "out", `${name}.sidecar.json`), "utf8"));
+  rmSync(join(out, "sidecar-extra.json"), { force: true });
+  const sc = JSON.parse(readFileSync(join(out, `${name}.sidecar.json`), "utf8"));
   log(`${kind}: post done in ${((Date.now() - t1) / 1000).toFixed(1)}s, ${sc.audio.count} × ${sc.audio.duration_s}s non_silent=${sc.audio.non_silent}${sc.audios?.[0]?.loop_seam_db != null ? " loop seam " + sc.audios[0].loop_seam_db + " dB" : ""}`);
   onP(1);
-  return { files: readdirSync(join(dir, "out")), audio: sc.audio };
+  return { files: readdirSync(out), audio: sc.audio, stages: sc.stages ?? [] };
 }
 
 /** Speech (Phase 7): Kokoro-82M in the svc-audio container. CPU only. */

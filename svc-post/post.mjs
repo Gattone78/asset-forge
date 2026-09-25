@@ -135,15 +135,18 @@ if (args.mode === "trailer") {
   const durs = clips.map((c) => Number(JSON.parse(run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", c])).format.duration));
   const esc = (s) => s.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
   const font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-  // Inputs: 0 = title card (lavfi colour source), 1..n = clips, all normalised to the first clip's size/fps.
-  const inputs = ["-f", "lavfi", "-t", String(card), "-i", `color=c=0x2e7d32:s=${W}x${H}:r=${fps}`];
+  // Inputs: 0 = title card (lavfi colour source, omitted when --card 0), then the clips, all normalised to the first clip's size/fps.
+  // Segment i is input i in both cases (with a card, clip k is segment/input k+1; without, clip k is segment/input k).
+  const hasCard = card > 0;
+  const inputs = hasCard ? ["-f", "lavfi", "-t", String(card), "-i", `color=c=0x2e7d32:s=${W}x${H}:r=${fps}`] : [];
   for (const c of clips) inputs.push("-i", c);
-  let fc = title ? `[0:v]drawtext=fontfile=${font}:text='${esc(title)}':fontcolor=white:fontsize=${Math.round(H / 8)}:x=(w-text_w)/2:y=(h-text_h)/2-${Math.round(H / 20)}` +
+  let fc = !hasCard ? "" : title ? `[0:v]drawtext=fontfile=${font}:text='${esc(title)}':fontcolor=white:fontsize=${Math.round(H / 8)}:x=(w-text_w)/2:y=(h-text_h)/2-${Math.round(H / 20)}` +
     (subtitle ? `,drawtext=fontfile=${font}:text='${esc(subtitle)}':fontcolor=white:fontsize=${Math.round(H / 20)}:x=(w-text_w)/2:y=(h/2)+${Math.round(H / 12)}` : "") + `,format=yuv420p[v0];` : `[0:v]format=yuv420p[v0];`;
-  const segs = ["[v0]"]; const segDur = [card];
-  clips.forEach((_, i) => { fc += `[${i + 1}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${fps},format=yuv420p[v${i + 1}];`; segs.push(`[v${i + 1}]`); segDur.push(durs[i]); });
+  const segs = hasCard ? ["[v0]"] : []; const segDur = hasCard ? [card] : []; const segClip = hasCard ? [null] : [];
+  clips.forEach((_, i) => { const k = segs.length; fc += `[${k}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${fps},format=yuv420p[v${k}];`; segs.push(`[v${k}]`); segDur.push(durs[i]); segClip.push(i); });
   // Chain xfade: offset = accumulated duration - xf each time.
   let acc = segDur[0]; let prev = segs[0];
+  if (segs.length === 1) fc += `${segs[0]}null[vout];`;
   for (let i = 1; i < segs.length; i++) {
     const out = i === segs.length - 1 ? "[vout]" : `[x${i}]`;
     fc += `${prev}${segs[i]}xfade=transition=fade:duration=${xf}:offset=${(acc - xf).toFixed(3)}${out};`;
@@ -162,7 +165,7 @@ if (args.mode === "trailer") {
     let ac = "";
     const aSegs = [];
     segDur.forEach((d, i) => {
-      if (i > 0 && hasAudio(clips[i - 1])) ac += `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${d.toFixed(3)},apad=whole_dur=${d.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;
+      if (segClip[i] !== null && hasAudio(clips[segClip[i]])) ac += `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${d.toFixed(3)},apad=whole_dur=${d.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;
       else ac += `anullsrc=r=48000:cl=stereo,atrim=0:${d.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;   // one silent source per silent segment
       aSegs.push(`[a${i}]`);
     });
@@ -194,7 +197,7 @@ if (args.mode === "trailer") {
   fc = fc.replace(/;;/g, ";").replace(/;$/, "");
   const out = join(outDir, `${name}.mp4`);
   run("ffmpeg", ["-y", "-v", "error", ...inputs, "-filter_complex", fc, ...maps, "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", ...audioArgs, out]);
-  run("ffmpeg", ["-y", "-v", "error", "-ss", String(Math.min(1, card / 2)), "-i", out, "-frames:v", "1", join(outDir, `${name}-poster.png`)]);
+  run("ffmpeg", ["-y", "-v", "error", "-ss", String(hasCard ? Math.min(1, card / 2) : Math.min(1, total / 3)), "-i", out, "-frames:v", "1", join(outDir, `${name}-poster.png`)]);
   copyFileSync(join(outDir, `${name}-poster.png`), join(outDir, "thumb.png"));
   const totalOut = Number(JSON.parse(run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", out])).format.duration);
   const sidecar = { forge_version: "0.1.0", created_at: new Date().toISOString(), trailer: { clips: clips.map((c) => basename(c)), title, subtitle, card_s: card, xfade_s: xf, width: W, height: H, fps, duration_s: Number(totalOut.toFixed(3)),

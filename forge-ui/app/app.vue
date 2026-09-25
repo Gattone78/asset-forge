@@ -4,6 +4,7 @@
       <v-app-bar-title>
         <NuxtLink to="/" class="text-white text-decoration-none font-weight-bold">Asset Forge</NuxtLink>
       </v-app-bar-title>
+      <v-btn to="/uploads" variant="text" class="text-white" prepend-icon="mdi-camera" size="small">Uploads</v-btn>
       <GpuChip />
     </v-app-bar>
     <v-main>

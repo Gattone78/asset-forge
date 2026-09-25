@@ -1,8 +1,9 @@
 // Thin client over forge-api (req §6). Same origin: the SPA is served by forge-api at /ui/.
-export interface JobRequest { type: string; prompt: string; profile: string; seed: number; rig: boolean; count: number; height_m?: number; views?: string; rerun_of?: string; batch?: string; image?: { kind?: string; transparent?: boolean; seamless?: boolean; size?: number }; video?: { duration_s?: number; fps?: number; aspect?: string; init_image?: string; fast?: boolean }; trailer?: { clips: string[]; title?: string; subtitle?: string; music?: string; narration?: { speech: string; at_s: number }[] }; audio?: { duration_s?: number; count?: number; loop?: boolean; bpm?: number; key?: string; voice?: string; speed?: number; clip?: string; channels?: string } }
+export interface JobRequest { type: string; prompt: string; profile: string; seed: number; rig: boolean; count: number; height_m?: number; views?: string; rerun_of?: string; batch?: string; image?: { kind?: string; transparent?: boolean; seamless?: boolean; size?: number }; video?: { duration_s?: number; fps?: number; aspect?: string; init_image?: string; fast?: boolean }; trailer?: { clips: string[]; title?: string; subtitle?: string; music?: string; narration?: { speech: string; at_s: number }[] }; audio?: { duration_s?: number; count?: number; loop?: boolean; bpm?: number; key?: string; voice?: string; speed?: number; clip?: string; channels?: string }; promo?: { photo: string; style: string; duration_s?: number; aspect?: string; script?: string; narration_at_s?: number; music?: boolean; music_prompt?: string; foley?: boolean; title?: string }; model?: { photos: string[]; style: string } }
 export interface Job { id: string; status: string; stage: string; progress: number; error: string | null; request: JobRequest; result: any; created_at: string; updated_at: string }
 export interface Health { ok: boolean; version: string; worker_busy: boolean; queue: Record<string, number>; gpu: { comfyui_up: boolean; container: string; vram_used_mib: number | null; vram_free_mib: number | null; idle_stop_at: string | null; idle_timeout_s: number } }
 export interface Assets { id: string; status: string; files: { path: string; bytes: number }[]; sidecar: any }
+export interface Upload { id: string; name: string; bytes: number; width: number; height: number; uploaded_at: string; file: string }
 
 export const ACTIVE = new Set(["queued", "running"]);
 export const STATUS_COLOR: Record<string, string> = { queued: "grey", running: "blue", review: "orange", approved: "green", rejected: "red", failed: "error" };
@@ -25,6 +26,10 @@ export function useApi() {
     reject: (id: string) => j<Job>(`/jobs/${id}/reject`, { method: "POST", body: {} }),
     rerun: (id: string, seed?: number) => j<Job>(`/jobs/${id}/rerun`, { method: "POST", body: seed === undefined ? {} : { seed } }),
     assetUrl: (id: string, path: string) => `${base}/assets/${id}/${path}`,
+    uploads: () => j<Upload[]>("/uploads"),
+    upload: (file: File) => $fetch<Upload>(base + `/uploads?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file, headers: { "content-type": file.type || "application/octet-stream" } }),
+    deleteUpload: (id: string) => j<{ ok: boolean }>(`/uploads/${id}`, { method: "DELETE" }),
+    uploadUrl: (id: string) => `${base}/uploads/${id}`,
   };
 }
 

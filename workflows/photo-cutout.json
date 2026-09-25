@@ -1,0 +1,9 @@
+{
+ "1": {"class_type": "LoadImage", "_meta": {"title": "Photo"}, "inputs": {"image": "jobs/unset/photo.png"}},
+ "2": {"class_type": "ImageScale", "_meta": {"title": "Fit"}, "inputs": {"image": ["1", 0], "upscale_method": "lanczos", "width": 1024, "height": 1024, "crop": "center"}},
+ "3": {"class_type": "LoadBackgroundRemovalModel", "_meta": {"title": "Load BiRefNet"}, "inputs": {"bg_removal_name": "birefnet.safetensors"}},
+ "4": {"class_type": "RemoveBackground", "_meta": {"title": "Subject mask"}, "inputs": {"bg_removal_model": ["3", 0], "image": ["2", 0]}},
+ "5": {"class_type": "InvertMask", "_meta": {"title": "Mask to alpha"}, "inputs": {"mask": ["4", 0]}},
+ "6": {"class_type": "JoinImageWithAlpha", "_meta": {"title": "Cut out"}, "inputs": {"image": ["2", 0], "alpha": ["5", 0]}},
+ "7": {"class_type": "SaveImage", "_meta": {"title": "Save"}, "inputs": {"images": ["6", 0], "filename_prefix": "jobs/unset/refs/front"}}
+}
