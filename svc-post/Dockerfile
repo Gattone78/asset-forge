@@ -10,7 +10,7 @@ ARG GLTF_TRANSFORM_VERSION=4.5.0
 ENV DEBIAN_FRONTEND=noninteractive
 # Blender's headless runtime needs these even with no display (Cycles CPU, no EGL required for -b).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl xz-utils python3 \
+      ca-certificates curl xz-utils python3 ffmpeg fonts-dejavu-core \
       libx11-6 libxi6 libxxf86vm1 libxfixes3 libxrender1 libxkbcommon0 libsm6 libice6 \
       libgl1 libegl1 libgomp1 libxcb1 \
     && rm -rf /var/lib/apt/lists/*

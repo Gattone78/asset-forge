@@ -23,6 +23,76 @@ const args = parseArgs(process.argv.slice(2));
 const t0 = Date.now();
 const log = (...m) => console.log(`[post ${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...m);
 
+// ---- video mode (Phase 6): ComfyUI's mp4 -> web-safe H.264 MP4 + WebM + poster frame + probe + non-blank check ----
+//   node post.mjs --mode video --in clip.mp4 --out-dir out/ --name <name> [--sidecar-extra extra.json]
+if (args.mode === "video") {
+  const inp = resolve(req("in")); const outDir = resolve(req("out-dir")); const name = req("name"); mkdirSync(outDir, { recursive: true });
+  const mp4 = join(outDir, `${name}.mp4`), webm = join(outDir, `${name}.webm`), poster = join(outDir, `${name}-poster.png`), thumb = join(outDir, "thumb.png");
+  const probe = JSON.parse(run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate,nb_frames,codec_name:format=duration", "-of", "json", inp]));
+  const st = probe.streams[0]; const fps = eval(st.r_frame_rate); const duration = Number(probe.format.duration);
+  run("ffmpeg", ["-y", "-v", "error", "-i", inp, "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", mp4]);
+  run("ffmpeg", ["-y", "-v", "error", "-i", inp, "-c:v", "libvpx-vp9", "-crf", "32", "-b:v", "0", "-row-mt", "1", "-an", webm]);
+  run("ffmpeg", ["-y", "-v", "error", "-ss", String(Math.max(0, duration / 3)), "-i", inp, "-frames:v", "1", poster]);
+  copyFileSync(poster, thumb);
+  // Non-blank + motion check: luma stddev of the first, middle and last frames, and mean |diff| first vs last.
+  const stats = run("ffmpeg", ["-v", "error", "-i", inp, "-vf", "select='eq(n\\,0)+eq(n\\,%d)+eq(n\\,%d)',signalstats,metadata=print:file=-".replace("%d", String(Math.max(1, Math.floor(Number(st.nb_frames) / 2)))).replace("%d", String(Math.max(2, Number(st.nb_frames) - 1))), "-vsync", "0", "-f", "null", "-"]);
+  const yavg = [...stats.matchAll(/lavfi\.signalstats\.YAVG=([\d.]+)/g)].map((m) => Number(m[1]));
+  const ydif = [...stats.matchAll(/lavfi\.signalstats\.YDIF=([\d.]+)/g)].map((m) => Number(m[1]));
+  const ymin = [...stats.matchAll(/lavfi\.signalstats\.YMIN=([\d.]+)/g)].map((m) => Number(m[1]));
+  const ymax = [...stats.matchAll(/lavfi\.signalstats\.YMAX=([\d.]+)/g)].map((m) => Number(m[1]));
+  const contrast = ymax.map((v, i) => v - (ymin[i] ?? 0));
+  const nonBlank = contrast.every((c) => c > 40) && (Math.max(...yavg) - Math.min(...yavg) > 0.5 || ydif.some((d) => d > 0.5));
+  const extra = args["sidecar-extra"] ? JSON.parse(readFileSync(resolve(args["sidecar-extra"]), "utf8")) : {};
+  const sidecar = {
+    forge_version: "0.1.0", created_at: new Date().toISOString(), ...extra,
+    video: { width: st.width, height: st.height, fps, duration_s: Number(duration.toFixed(3)), frames: Number(st.nb_frames), source_codec: st.codec_name,
+             non_blank: nonBlank, frame_contrast: contrast, frame_luma_avg: yavg, frame_diff: ydif },
+    files: { mp4: basename(mp4), webm: basename(webm), poster: basename(poster), thumb: "thumb.png" },
+    status: extra.status || "review",
+  };
+  writeFileSync(join(outDir, `${name}.sidecar.json`), JSON.stringify(sidecar, null, 1));
+  log(`done: ${st.width}x${st.height} ${fps} fps ${duration.toFixed(2)} s, ${(statSync(mp4).size / 1e6).toFixed(2)} MB mp4, ${(statSync(webm).size / 1e6).toFixed(2)} MB webm, non_blank=${nonBlank} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  process.exit(nonBlank ? 0 : 3);
+}
+
+// ---- trailer mode (Phase 6, optional): title card + clips with crossfades -> one MP4 ----
+//   node post.mjs --mode trailer --clips a.mp4,b.mp4,c.mp4 --out-dir out/ --name <name> [--title "Meadowbots"] [--subtitle "…"] [--xfade 0.5] [--card 2]
+if (args.mode === "trailer") {
+  const clips = String(req("clips")).split(",").map((c) => resolve(c.trim())).filter(Boolean);
+  const outDir = resolve(req("out-dir")); const name = req("name"); mkdirSync(outDir, { recursive: true });
+  const xf = num(args.xfade, 0.5), card = num(args.card, 2.0), title = args.title ?? "", subtitle = args.subtitle ?? "";
+  const first = JSON.parse(run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate", "-of", "json", clips[0]])).streams[0];
+  const W = first.width, H = first.height, fps = eval(first.r_frame_rate);
+  const durs = clips.map((c) => Number(JSON.parse(run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", c])).format.duration));
+  const esc = (s) => s.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
+  const font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+  // Inputs: 0 = title card (lavfi colour source), 1..n = clips, all normalised to the first clip's size/fps.
+  const inputs = ["-f", "lavfi", "-t", String(card), "-i", `color=c=0x2e7d32:s=${W}x${H}:r=${fps}`];
+  for (const c of clips) inputs.push("-i", c);
+  let fc = title ? `[0:v]drawtext=fontfile=${font}:text='${esc(title)}':fontcolor=white:fontsize=${Math.round(H / 8)}:x=(w-text_w)/2:y=(h-text_h)/2-${Math.round(H / 20)}` +
+    (subtitle ? `,drawtext=fontfile=${font}:text='${esc(subtitle)}':fontcolor=white:fontsize=${Math.round(H / 20)}:x=(w-text_w)/2:y=(h/2)+${Math.round(H / 12)}` : "") + `,format=yuv420p[v0];` : `[0:v]format=yuv420p[v0];`;
+  const segs = ["[v0]"]; const segDur = [card];
+  clips.forEach((_, i) => { fc += `[${i + 1}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${fps},format=yuv420p[v${i + 1}];`; segs.push(`[v${i + 1}]`); segDur.push(durs[i]); });
+  // Chain xfade: offset = accumulated duration - xf each time.
+  let acc = segDur[0]; let prev = segs[0];
+  for (let i = 1; i < segs.length; i++) {
+    const out = i === segs.length - 1 ? "[vout]" : `[x${i}]`;
+    fc += `${prev}${segs[i]}xfade=transition=fade:duration=${xf}:offset=${(acc - xf).toFixed(3)}${out};`;
+    acc += segDur[i] - xf; prev = out;
+  }
+  fc = fc.replace(/;$/, "");
+  const out = join(outDir, `${name}.mp4`);
+  run("ffmpeg", ["-y", "-v", "error", ...inputs, "-filter_complex", fc, "-map", "[vout]", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", out]);
+  run("ffmpeg", ["-y", "-v", "error", "-ss", String(Math.min(1, card / 2)), "-i", out, "-frames:v", "1", join(outDir, `${name}-poster.png`)]);
+  copyFileSync(join(outDir, `${name}-poster.png`), join(outDir, "thumb.png"));
+  const total = Number(JSON.parse(run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", out])).format.duration);
+  const sidecar = { forge_version: "0.1.0", created_at: new Date().toISOString(), trailer: { clips: clips.map((c) => basename(c)), title, subtitle, card_s: card, xfade_s: xf, width: W, height: H, fps, duration_s: Number(total.toFixed(3)) },
+    files: { mp4: basename(out), poster: `${name}-poster.png`, thumb: "thumb.png" }, status: "review" };
+  writeFileSync(join(outDir, `${name}.sidecar.json`), JSON.stringify(sidecar, null, 1));
+  log(`trailer: ${clips.length} clips + card -> ${basename(out)} ${W}x${H} ${total.toFixed(2)} s (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  process.exit(0);
+}
+
 // ---- rig mode: merge UniRig's FBX with the finished asset -> <name>.rigged.glb / .rigged.fbx, sidecar updated ----
 //   node post.mjs --mode rig --rigged raw/rigged.fbx --textured out/<name>.blender.glb --out-dir out/ --name <name>
 //        [--height 0.6] [--yaw-deg 0] [--template articulationxl] [--compression meshopt|none]

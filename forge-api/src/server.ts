@@ -25,10 +25,16 @@ app.get("/profiles", async () => listProfiles());
 
 app.post("/jobs", async (req, reply) => {
   const b = (req.body ?? {}) as Partial<JobRequest>;
-  if (!b.prompt || !b.profile) return reply.code(400).send({ error: "prompt and profile are required" });
+  if ((!b.prompt && b.type !== "trailer") || !b.profile) return reply.code(400).send({ error: "prompt and profile are required" });
   let profile; try { profile = loadProfile(b.profile); } catch { return reply.code(400).send({ error: `unknown profile ${b.profile}` }); }
   const type = (b.type ?? "creature") as JobRequest["type"];
-  if (!["creature", "prop", "plant", "image"].includes(type)) return reply.code(400).send({ error: "bad type" });
+  if (!["creature", "prop", "plant", "image", "video", "trailer"].includes(type)) return reply.code(400).send({ error: "bad type" });
+  if (type === "trailer") {
+    const clips = ((b.trailer?.clips ?? []) as string[]).map(String).filter(Boolean);
+    if (!clips.length) return reply.code(400).send({ error: "trailer needs trailer.clips: [job ids of finished video jobs]" });
+    for (const c of clips) { const j = getJob(c); if (!j || j.request.type !== "video" || !["review", "approved"].includes(j.status)) return reply.code(400).send({ error: `clip ${c} is not a finished video job` }); }
+  }
+  const vid = (b.video ?? {}) as NonNullable<JobRequest["video"]>;
   const img = (b.image ?? {}) as NonNullable<JobRequest["image"]>;
   const kind = (["sprite", "texture", "tile"].includes(img.kind ?? "") ? img.kind : "sprite") as "sprite" | "texture" | "tile";
   const jr: JobRequest = {
@@ -38,7 +44,11 @@ app.post("/jobs", async (req, reply) => {
     rerun_of: b.rerun_of, restart_comfy: !!b.restart_comfy,
     batch: b.batch ? String(b.batch).slice(0, 64) : undefined,
     image: type === "image" ? { kind, transparent: img.transparent ?? kind === "sprite", seamless: img.seamless ?? kind !== "sprite", size: img.size ? Number(img.size) : undefined } : undefined,
+    video: type === "video" ? { duration_s: vid.duration_s ? Math.min(10, Math.max(1, Number(vid.duration_s))) : undefined, fps: vid.fps ? Number(vid.fps) : undefined,
+      aspect: vid.aspect === "9:16" ? "9:16" : "16:9", init_image: vid.init_image ? String(vid.init_image) : undefined, fast: vid.fast ?? true } : undefined,
+    trailer: type === "trailer" ? { clips: (b.trailer!.clips as string[]).map(String), title: b.trailer?.title, subtitle: b.trailer?.subtitle, xfade_s: b.trailer?.xfade_s, card_s: b.trailer?.card_s } : undefined,
   };
+  if (type === "trailer") jr.prompt = jr.prompt || `trailer: ${jr.trailer!.title ?? jr.trailer!.clips.length + " clips"}`;
   if (jr.rig && type !== "creature") return reply.code(400).send({ error: "rigging applies to creatures only (props and plants get named pivots, req §1)" });
   if (jr.views === "multi") return reply.code(501).send({ error: "views=multi is not effective: ComfyUI core's Trellis2Conditioning treats an image batch as separate objects, so the result equals the front-only run (Phase 2 bake-off, docs/phase-2.md). Multi-view needs the Pixal3D multi-view model; not wired yet." });
   const job = insertJob(randomUUID(), jr);
