@@ -28,6 +28,8 @@ const sidecarFile = computed(() => outFiles.value.find((f) => f.path.endsWith(".
 const sidecar = computed(() => assets.value?.sidecar);
 const logTail = computed(() => log.value.split("\n").filter(Boolean).slice(-40).join("\n"));
 const picked = computed(() => candidates.value?.picked as string | undefined);
+const isImage = computed(() => job.value?.request.type === "image");
+const imageEntries = computed(() => (sidecar.value?.images ?? []) as any[]);
 
 async function refresh() {
   try {
@@ -61,7 +63,7 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
       <span class="text-caption text-medium-emphasis">{{ short(job.id) }} · {{ ago(job.created_at) }}</span>
     </div>
     <h2 class="text-h6 mb-1">{{ job.request.prompt }}</h2>
-    <div class="text-caption text-medium-emphasis mb-3">{{ job.request.type }} · {{ job.request.profile }} · seed {{ job.request.seed }} · {{ job.request.count }} candidates<span v-if="job.request.rerun_of"> · rerun of {{ short(job.request.rerun_of) }}</span></div>
+    <div class="text-caption text-medium-emphasis mb-3">{{ job.request.type }}<span v-if="job.request.image"> ({{ job.request.image.kind }}<span v-if="job.request.image.transparent">, transparent</span><span v-if="job.request.image.seamless">, seamless</span>)</span> · {{ job.request.profile }} · seed {{ job.request.seed }} · {{ job.request.count }} candidates<span v-if="job.request.batch"> · batch <NuxtLink :to="`/?batch=${encodeURIComponent(job.request.batch)}`">{{ job.request.batch }}</NuxtLink></span><span v-if="job.request.rerun_of"> · rerun of {{ short(job.request.rerun_of) }}</span></div>
     <v-progress-linear v-if="active" :model-value="job.progress * 100" :indeterminate="job.status === 'queued'" color="primary" height="6" rounded class="mb-3" />
     <v-alert v-if="job.error" type="error" density="compact" class="mb-3">{{ job.error }}</v-alert>
     <v-alert v-if="err" type="warning" density="compact" class="mb-3">{{ err }}</v-alert>
@@ -80,6 +82,17 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
 
     <v-row dense>
       <v-col cols="12" md="7">
+        <v-card v-if="isImage && imageEntries.length" class="mb-3" title="Images" :subtitle="`${imageEntries.length} candidate(s)` + (imageEntries[0]?.alpha ? ' · transparent PNG' : '')">
+          <v-card-text class="pt-0">
+            <v-row dense>
+              <v-col v-for="im in imageEntries" :key="im.file" cols="6">
+                <a :href="api.assetUrl(job.id, 'out/' + im.file)" target="_blank"><v-img :src="api.assetUrl(job.id, 'out/' + im.file)" aspect-ratio="1" contain class="checker" rounded="lg" /></a>
+                <div class="text-caption text-center">{{ im.width }}×{{ im.height }}<span v-if="im.seam_score !== undefined"> · seam {{ im.seam_score.toFixed(3) }} <span :class="im.seam_score < 0.05 ? 'text-green' : 'text-orange'">({{ im.seam_score < 0.05 ? 'tiles cleanly' : 'visible seam' }})</span></span></div>
+                <v-img v-if="im.tiled" :src="api.assetUrl(job.id, 'out/' + im.tiled)" aspect-ratio="1" cover rounded="lg" class="mt-1" title="2x2 tiled preview" />
+              </v-col>
+            </v-row>
+          </v-card-text>
+        </v-card>
         <v-card v-if="previewSrc" class="mb-3">
           <ModelViewer :src="api.assetUrl(job.id, previewSrc)" :wiggle="showRigged && wiggle" @loaded="viewerInfo = $event" @error="err = 'preview failed: ' + $event" />
           <v-card-text v-if="viewerInfo" class="text-caption py-2 d-flex flex-wrap align-center ga-2">
@@ -150,4 +163,5 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
 <style scoped>
 .log { font-size: 11px; line-height: 1.35; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; margin: 0; }
 .picked { outline: 3px solid #2e7d32; }
+.checker { background-color: #ddd; background-image: linear-gradient(45deg, #bbb 25%, transparent 25%), linear-gradient(-45deg, #bbb 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #bbb 75%), linear-gradient(-45deg, transparent 75%, #bbb 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
 </style>

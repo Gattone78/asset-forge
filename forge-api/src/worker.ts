@@ -65,6 +65,16 @@ async function runJob(job0: Job): Promise<void> {
     set("starting", 0);
     await comfy.ensureUp(log);
 
+    if (req.type === "image") {
+      // ---- 2D job (Phase 5): sprites / textures / tiles, no 3D stages ----
+      set("image", 0.1);
+      const name = `${profile.game}-image-${slug(req.prompt)}-${id.slice(0, 6)}`;
+      const res = await stageImage(id, req, profile, name, log);
+      updateJob(id, { status: "review", stage: "review", progress: 1, result: { name, files: res.files, images: res.images, seconds: (Date.now() - t0) / 1000 } });
+      log(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s -> ${name}`);
+      return;
+    }
+
     // ---- stage 1: reference images ----
     set("refs", 0.05);
     const views = req.views ?? profile.image.views ?? "front";
@@ -194,6 +204,106 @@ async function stage3d(id: string, req: Job["request"], profile: Profile, refs: 
   if (!out["remeshed-painted"] || !out["painted"] || !out["raw"]) throw new Error("3d stage did not produce raw/painted/remeshed-painted GLBs: " + Object.keys(out).join(","));
   onP(1);
   return out;
+}
+
+/** 2D stage (Phase 5): N FLUX images, cut out with BiRefNet when transparent, tile-checked when seamless. */
+async function stageImage(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void): Promise<{ files: string[]; images: any[] }> {
+  const dir = jobDir(id);
+  const opts = req.image ?? { kind: "sprite", transparent: true, seamless: false };
+  const kind = opts.kind ?? "sprite";
+  const transparent = !!opts.transparent, seamless = !!opts.seamless;
+  const size = opts.size ?? profile.image.size;
+  // Sprites share the profile's style prompt; textures/tiles use texture_style instead — the creature-flavoured
+  // style prompt ("friendly, clean silhouette") makes FLUX put a character into a ground texture.
+  const im = profile.image as any;
+  const text = kind === "sprite"
+    ? `${req.prompt}, ${profile.style_prompt}, ${im.sprite_prompt ?? ""}`
+    : `${req.prompt}, ${im.texture_style ?? profile.style_prompt}, ${im.texture_prompt ?? ""}`;
+  const wf = loadWorkflow(transparent ? "image-cutout.json" : "image-refs.json");
+  setInput(wf, "Prompt", "text", text);
+  setInput(wf, "Latent", "width", size); setInput(wf, "Latent", "height", size); setInput(wf, "Latent", "batch_size", req.count);
+  setInput(wf, "Sampler", "seed", req.seed); setInput(wf, "Sampler", "steps", profile.image.steps);
+  setInput(wf, "Save", "filename_prefix", `jobs/${id}/out/${kind}`);
+  if (transparent) setInput(wf, "Save original", "filename_prefix", `jobs/${id}/refs/original`);
+  const r = await comfy.run(wf, () => {});
+  log(`image/${kind}: ${req.count} image(s) in ${r.seconds.toFixed(1)}s (seed ${req.seed}, ${size}px, transparent=${transparent}, seamless=${seamless})`);
+  // Collect outputs: cut-outs (or plain images) -> out/<name>-N.png, originals -> refs/.
+  const outDir = join(dir, "out"), refDir = join(dir, "refs");
+  const srcOut = join(config.comfyOutput, "jobs", id, "out"), srcRefs = join(config.comfyOutput, "jobs", id, "refs");
+  const images: any[] = [];
+  let n = 0;
+  for (const f of readdirSync(srcOut).sort()) {
+    n++;
+    const dst = join(outDir, `${name}-${n}.png`);
+    renameSync(join(srcOut, f), dst);
+    const meta = await sharp(dst).metadata();
+    const entry: any = { file: basename(dst), width: meta.width, height: meta.height, alpha: !!meta.hasAlpha };
+    if (seamless) {
+      // FLUX does not tile on its own (raw seam scores 0.25-0.35), so make it tileable: keep the raw image in
+      // refs/, then crossfade the borders into the half-offset copy, whose wrap edges are continuous.
+      const rawCopy = join(refDir, `${name}-${n}-raw.png`);
+      copyFileSync(dst, rawCopy);
+      const before = await tileCheck(rawCopy, join(refDir, `${name}-${n}-raw-tiled.png`));
+      await makeSeamless(rawCopy, dst);
+      const t = await tileCheck(dst, join(outDir, `${name}-${n}-tiled.png`));
+      entry.seam_score = t.score; entry.seam_h = t.h; entry.seam_v = t.v; entry.tiled = basename(t.tiled);
+      entry.seam_score_raw = before.score; entry.raw = basename(rawCopy);
+    }
+    images.push(entry);
+  }
+  if (existsSync(srcRefs)) for (const f of readdirSync(srcRefs)) renameSync(join(srcRefs, f), join(refDir, f));
+  rmSync(join(config.comfyOutput, "jobs", id), { recursive: true, force: true });
+  if (!images.length) throw new Error("image stage produced no files");
+  await sharp(join(outDir, images[0].file)).resize(512, 512, { fit: "inside" }).png().toFile(join(outDir, "thumb.png"));
+  const sidecar = {
+    forge_version: "0.1.0", job_id: id, created_at: new Date().toISOString(), game: profile.game, profile: profile.name,
+    profile_hash: profile._hash, prompt: req.prompt, negative_prompt: profile.negative_prompt, request: req, batch: req.batch ?? null,
+    stages: [{ stage: "image", model: "black-forest-labs/FLUX.1-schnell", source: "Comfy-Org/flux1-schnell (bf16)", seed: req.seed, steps: profile.image.steps,
+               count: req.count, size, kind, transparent, seamless, background_removal: transparent ? "BiRefNet (ComfyUI core RemoveBackground)" : null, license: "Apache-2.0" }],
+    images, files: { thumb: "thumb.png" }, status: "review",
+  };
+  writeFileSync(join(outDir, `${name}.sidecar.json`), JSON.stringify(sidecar, null, 1));
+  const seams = images.filter((i) => i.seam_score !== undefined).map((i) => i.seam_score.toFixed(3));
+  log(`image: ${images.length} file(s)${seams.length ? ", seam scores " + seams.join(", ") : ""}`);
+  return { files: readdirSync(outDir), images };
+}
+
+/** Offset-and-crossfade: out = original in the centre, the half-shifted copy at the borders, feathered
+ *  over `margin` of the size. The shifted copy's border is the original's centre, so the result wraps. */
+async function makeSeamless(src: string, dst: string, margin = 0.22): Promise<void> {
+  const { data, info } = await sharp(src).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const w = info.width, h = info.height, ch = info.channels;
+  const out = Buffer.alloc(w * h * ch);
+  const mx = Math.round(w * margin), my = Math.round(h * margin);
+  const smooth = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+  for (let y = 0; y < h; y++) {
+    const fy = smooth(Math.min(y, h - 1 - y) / my);
+    const sy = (y + (h >> 1)) % h;
+    for (let x = 0; x < w; x++) {
+      const m = Math.min(fy, smooth(Math.min(x, w - 1 - x) / mx));   // 1 in the centre, 0 at the edges
+      const sx = (x + (w >> 1)) % w;
+      const o = (y * w + x) * ch, s = (sy * w + sx) * ch;
+      for (let c = 0; c < ch; c++) out[o + c] = Math.round(data[o + c] * m + data[s + c] * (1 - m));
+    }
+  }
+  await sharp(out, { raw: { width: w, height: h, channels: ch as 3 } }).png().toFile(dst);
+}
+
+/** Seamless tile check: mean absolute difference between the left/right edge columns and top/bottom
+ *  rows (0 = wraps perfectly, ~0.3 = clearly not tileable), plus a 2x2 tiled preview for the eye. */
+async function tileCheck(file: string, tiledOut: string): Promise<{ score: number; h: number; v: number; tiled: string }> {
+  const { data, info } = await sharp(file).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const w = info.width, h = info.height, ch = info.channels;
+  let dh = 0, dv = 0;
+  for (let y = 0; y < h; y++) for (let c = 0; c < 3; c++) dh += Math.abs(data[(y * w) * ch + c] - data[(y * w + w - 1) * ch + c]);
+  for (let x = 0; x < w; x++) for (let c = 0; c < 3; c++) dv += Math.abs(data[x * ch + c] - data[((h - 1) * w + x) * ch + c]);
+  const hs = dh / (h * 3 * 255), vs = dv / (w * 3 * 255);
+  const half = Math.round(w / 2);
+  const small = await sharp(file).resize(half, half).png().toBuffer();
+  await sharp({ create: { width: half * 2, height: half * 2, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: small, left: 0, top: 0 }, { input: small, left: half, top: 0 }, { input: small, left: 0, top: half }, { input: small, left: half, top: half }])
+    .png().toFile(tiledOut);
+  return { score: Math.max(hs, vs), h: hs, v: vs, tiled: tiledOut };
 }
 
 /** Rig stage (Phase 4): UniRig on the finished, normalized asset (rig.json), then a Blender merge that

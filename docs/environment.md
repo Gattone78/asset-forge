@@ -124,3 +124,10 @@ sr0     1024M rom
 
 - **Review UI** at `http://192.168.1.51:8080/ui/` (static Nuxt build served by forge-api; `/` redirects there). Rebuild on the VM with `./deploy/build-ui.sh` (npm install + nuxt generate + forge-api restart — only between jobs). Build inputs: `forge-ui/node_modules` (~600 packages) and output `forge-ui/.output/public` (5 MB) live in the VM checkout, not on the root disk.
 - **Caddy route** for `forge.gattonehq.com` → `192.168.1.51:8080` with a LAN + Tailscale `remote_ip` allow-list: snippet in `docs/phase-3.md`, applied by Phil in LXC 106.
+
+## Phase 5 additions (2026-09-25)
+
+- **Image jobs** write `out/<name>-N.png` (RGBA when transparent) plus `-N-tiled.png` previews; raw pre-blend textures and uncut originals go to `refs/`. No new models or dependencies: BiRefNet (already in `models/background_removal/`) does the cut-outs.
+- **Batches** are a `batch` column in `/srv/forge/db/forge.sqlite` (added in place on first start after the upgrade); `GET /batches` lists them. `examples/plants.yaml` is the reference batch file.
+- **Per-job wall time varies with the mesh**: plants ranged from 53 s (sunflower) to 261 s (berry bush: 3D stage 166 s, post 88 s) on the same settings, so a 10-job batch is 15–30 min, not a fixed 25.
+- **Deploy rule still applies**: `forge-api` restarts fail the running job and do not resume it; with a batch queued, deploy between batches or accept re-queuing the failed job by hand.
