@@ -97,7 +97,7 @@ export async function ensureUp(log: (m: string) => void): Promise<void> {
   ensureRigPlaceholder(log);
   log("starting comfyui container");
   const t0 = Date.now();
-  await nerdctl(composeArgs("up", "-d", "comfyui"));
+  await nerdctl(composeArgs("up", "-d", "--force-recreate", "comfyui"));   // recreate: a container left over from an older image tag would otherwise be reused
   for (let i = 0; i < 120; i++) {
     if (await isUp()) { log(`comfyui ready in ${((Date.now() - t0) / 1000).toFixed(0)}s`); return; }
     await sleep(2000);

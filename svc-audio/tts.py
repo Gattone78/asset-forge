@@ -6,7 +6,7 @@
 Model files come from $KOKORO_MODEL_DIR (kokoro-v1_0.pth, config.json, voices/*.pt) — downloaded once by models/download-audio.sh.
 Exit 3 when the result is silent (mean level below -50 dBFS).
 """
-import argparse, json, os, subprocess, sys, time
+import argparse, json, os, re, subprocess, sys, time
 from pathlib import Path
 
 ap = argparse.ArgumentParser()
@@ -49,13 +49,14 @@ def run(*cmd):
     return r.stderr + r.stdout
 
 wav_out, ogg, png = out / f"{a.name}.wav", out / f"{a.name}.ogg", out / f"{a.name}-waveform.png"
-# Peak-normalise to -1 dBFS, then measure loudness on the result.
-run("ffmpeg", "-y", "-v", "error", "-i", str(raw), "-af", "alimiter=limit=0.89:level=false,volume=0dB,aformat=sample_fmts=s16", str(wav_out))
+# Loudness-normalise speech to -16 LUFS (true peak -1.5 dBTP, EBU R128 single pass), then measure the result.
+run("ffmpeg", "-y", "-v", "error", "-i", str(raw), "-af", "loudnorm=I=-16:TP=-1.5:LRA=11,aformat=sample_fmts=s16:sample_rates=24000", str(wav_out))
 stats = run("ffmpeg", "-v", "info", "-i", str(wav_out), "-af", "volumedetect,ebur128=peak=true", "-f", "null", "-")
-def grab(key, default=None):
-    import re
-    m = re.search(key + r"\s*[:=]\s*(-?[\d.]+)", stats); return float(m.group(1)) if m else default
-mean_db, peak_db, lufs = grab("mean_volume"), grab("max_volume"), grab(r"I:")
+def grab(pattern, default=None):
+    m = re.findall(pattern, stats); return float(m[-1]) if m else default   # last match: ebur128 prints running values, then the summary
+mean_db = grab(r"mean_volume:\s*(-?[\d.]+)")
+peak_db = grab(r"max_volume:\s*(-?[\d.]+)")
+lufs = grab(r"\bI:\s*(-?[\d.]+) LUFS")
 run("ffmpeg", "-y", "-v", "error", "-i", str(wav_out), "-c:a", "libvorbis", "-q:a", "5", str(ogg))
 run("ffmpeg", "-y", "-v", "error", "-i", str(wav_out), "-filter_complex", "showwavespic=s=1024x256:colors=0x2e7d32", "-frames:v", "1", str(png))
 (out / "thumb.png").write_bytes(png.read_bytes())

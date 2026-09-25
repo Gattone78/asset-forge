@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg espeak-n
 # CPU torch wheel first (the default index would pull the multi-GB CUDA build), then kokoro + misaki (English G2P).
 RUN pip install "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cpu && \
     pip install "kokoro==${KOKORO_VERSION}" "misaki[en]>=0.9.4" soundfile && \
+    pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl && \
+    python -c "import spacy; spacy.load('en_core_web_sm'); print('spacy en_core_web_sm ok')" && \
     pip freeze | grep -iE "^(torch|kokoro|misaki|transformers|soundfile|numpy)=" > /opt/versions.txt
 
 COPY tts.py /opt/tts.py

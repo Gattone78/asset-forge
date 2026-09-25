@@ -358,7 +358,10 @@ async function stageAudio(id: string, req: Job["request"], profile: Profile, nam
     const srcJob = getJob(a.clip!)!;
     duration = a.duration_s ?? srcJob.result?.video?.duration_s ?? 5;
     const inDir = join(config.comfyInput, "jobs", id); mkdirSync(inDir, { recursive: true });
-    copyFileSync(clip, join(inDir, "clip.mp4")); clipRaw = join(dir, "raw", "clip.mp4"); copyFileSync(clip, clipRaw);
+    clipRaw = join(dir, "raw", "clip.mp4"); copyFileSync(clip, clipRaw);
+    // MMAudio's synchformer assumes 25 fps input (an 81-frame 16 fps clip is read as 3.24 s), so feed it a 25 fps copy.
+    await runContainer([...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, "--entrypoint", "ffmpeg", config.svcPostImage,
+      "-y", "-v", "error", "-i", clipRaw, "-r", "25", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-an", join(inDir, "clip.mp4")], join(dir, "log.txt"), "ffmpeg 25fps");
     wf = loadWorkflow("video-to-audio.json");
     setInput(wf, "Load clip", "file", `jobs/${id}/clip.mp4`);
     setInput(wf, "Sampler", "prompt", req.prompt ?? ""); setInput(wf, "Sampler", "duration", duration); setInput(wf, "Sampler", "seed", req.seed);

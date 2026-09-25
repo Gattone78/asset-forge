@@ -20,6 +20,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-venv python3-dev git ca-certificates curl \
       libgl1 libglib2.0-0 libegl1 libgomp1 \
+      build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # The CUDA base image ships an "ubuntu" user at uid 1000; rename it so the container user matches hqadmin (uid 1000) on the host bind mounts.

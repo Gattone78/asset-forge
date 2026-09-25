@@ -52,10 +52,13 @@ if (args.mode === "audio") {
       loopSeam = Number(Math.abs(tailLvl - headLvl).toFixed(2));
       inp = looped;
     }
-    run("ffmpeg", ["-y", "-v", "error", "-i", inp, "-af", `${af},alimiter=limit=0.89:level=false`, "-c:a", "pcm_s16le", wav]);
+    // Peak-normalise to -1 dBFS: measure the source peak, apply the gain, limit for safety.
+    const srcPeak = (() => { const m = /max_volume:\s*(-?[\d.]+)/.exec(runBoth("ffmpeg", ["-v", "info", "-i", inp, "-af", "volumedetect", "-f", "null", "-"])); return m ? Number(m[1]) : 0; })();
+    const gainDb = Math.max(-40, Math.min(40, -1 - srcPeak));
+    run("ffmpeg", ["-y", "-v", "error", "-i", inp, "-af", `${af},volume=${gainDb.toFixed(2)}dB,alimiter=limit=0.89:level=false`, "-c:a", "pcm_s16le", wav]);
     if (inp.endsWith(".loop.wav")) rmSafe(inp);
-    const stats = run("ffmpeg", ["-v", "info", "-i", wav, "-af", "volumedetect,ebur128=peak=true", "-f", "null", "-"]);
-    const grab = (re) => { const m = re.exec(stats); return m ? Number(m[1]) : null; };
+    const stats = runBoth("ffmpeg", ["-v", "info", "-i", wav, "-af", "volumedetect,ebur128=peak=true", "-f", "null", "-"]);
+    const grab = (re) => { const all = [...stats.matchAll(new RegExp(re.source, "g"))]; return all.length ? Number(all[all.length - 1][1]) : null; };   // last match: ebur128 logs running values before its summary
     const meanDb = grab(/mean_volume:\s*(-?[\d.]+)/), peakDb = grab(/max_volume:\s*(-?[\d.]+)/), lufs = grab(/I:\s*(-?[\d.]+) LUFS/);
     run("ffmpeg", ["-y", "-v", "error", "-i", wav, "-c:a", "libvorbis", "-q:a", "5", ogg]);
     if (kind === "music") run("ffmpeg", ["-y", "-v", "error", "-i", wav, "-c:a", "libmp3lame", "-q:a", "2", mp3]);
@@ -82,7 +85,7 @@ if (args.mode === "audio") {
   log(`done: ${entries.length} × ${entries[0].duration_s}s ${kind} @${sr} Hz ${ch}ch, mean ${entries.map((e) => e.mean_dbfs).join("/")} dBFS, non_silent=${anyGood} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   process.exit(anyGood ? 0 : 3);
 }
-function level(file, pre) { const s = run("ffmpeg", ["-v", "info", "-i", file, "-af", `${pre},volumedetect`, "-f", "null", "-"]); const m = /mean_volume:\s*(-?[\d.]+)/.exec(s); return m ? Number(m[1]) : -99; }
+function level(file, pre) { const s = runBoth("ffmpeg", ["-v", "info", "-i", file, "-af", `${pre},volumedetect`, "-f", "null", "-"]); const m = /mean_volume:\s*(-?[\d.]+)/.exec(s); return m ? Number(m[1]) : -99; }
 function rmSafe(p) { try { unlinkSync(p); } catch {} }
 
 // ---- video mode (Phase 6): ComfyUI's mp4 -> web-safe H.264 MP4 + WebM + poster frame + probe + non-blank check ----
@@ -152,15 +155,15 @@ if (args.mode === "trailer") {
   let maps = ["-map", "[vout]"];
   const audioArgs = withSound ? ["-c:a", "aac", "-b:a", "160k"] : ["-an"];
   if (withSound) {
-    const aIn = inputs.length / 2;                    // index of the first extra audio input
+    const aIn = inputs.filter((x) => x === "-i").length;   // index of the first extra audio input (card + clips so far)
     let extraInputs = [];
     let idx = aIn;
     // one audio stream per segment: the clip's own track or silence, trimmed to the segment length
-    let ac = `anullsrc=r=48000:cl=stereo[sil];[sil]asplit=${segs.length}` + segs.map((_, i) => `[s${i}]`).join("") + ";";
+    let ac = "";
     const aSegs = [];
     segDur.forEach((d, i) => {
       if (i > 0 && hasAudio(clips[i - 1])) ac += `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${d.toFixed(3)},apad=whole_dur=${d.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;
-      else ac += `[s${i}]atrim=0:${d.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;
+      else ac += `anullsrc=r=48000:cl=stereo,atrim=0:${d.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;   // one silent source per silent segment
       aSegs.push(`[a${i}]`);
     });
     let prevA = aSegs[0];
@@ -362,6 +365,12 @@ function run(cmd, cargs) {
   log(`${cmd} ${cargs[0]} (${((Date.now() - t) / 1000).toFixed(1)}s)${tail ? "\n" + tail : ""}`);
   if (r.status !== 0) { console.error(r.stdout, r.stderr); throw new Error(`${cmd} ${cargs[0]} failed (${r.status})`); }
   return r.stdout;
+}
+// ffmpeg writes filter statistics (volumedetect, ebur128) to stderr: this variant returns both streams.
+function runBoth(cmd, cargs) {
+  const r = spawnSync(cmd, cargs, { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", maxBuffer: 64 << 20 });
+  if (r.status !== 0) { console.error(r.stdout, r.stderr); throw new Error(`${cmd} ${cargs[0]} failed (${r.status})`); }
+  return (r.stdout || "") + (r.stderr || "");
 }
 function inspect(glb) {
   // gltf-transform inspect --format json is not stable across versions; parse the GLB header instead.

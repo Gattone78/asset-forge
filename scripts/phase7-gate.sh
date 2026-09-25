@@ -20,7 +20,7 @@ sudo nerdctl images | grep -q "forge/svc-audio" || { say "forge/svc-audio missin
 [ -d /srv/forge/models/mmaudio/nvidia/bigvgan_v2_44khz_128band_512x ] || { say "bigvgan folder missing"; exit 1; }
 
 # 1. comfyui 0.1.1 up
-sudo nerdctl compose -f compose.yaml up -d comfyui
+sudo nerdctl compose -f compose.yaml up -d --force-recreate comfyui
 for i in $(seq 1 60); do curl -sf localhost:8188/system_stats >/dev/null && break; sleep 5; done
 curl -sf localhost:8188/system_stats | python3 -c 'import sys,json; s=json.load(sys.stdin); print("comfyui", s["system"]["comfyui_version"], "torch", s["system"]["pytorch_version"], s["devices"][0]["name"])' || { say "comfyui not up"; exit 1; }
 curl -sf localhost:8188/object_info | python3 -c 'import sys,json; o=json.load(sys.stdin); print("nodes:", [n for n in ["TextEncodeAceStepAudio1.5","EmptyAceStep1.5LatentAudio","MMAudioSampler","MMAudioModelLoader","LoadVideo","GetVideoComponents","SaveAudio"] if n in o], "missing:", [n for n in ["TextEncodeAceStepAudio1.5","MMAudioSampler"] if n not in o])'
@@ -38,8 +38,11 @@ python3 scripts/run_workflow.py workflows/test-sfx.json --timeout 1800 || { say 
 python3 scripts/run_workflow.py workflows/test-sfx.json --timeout 1800 --set 6.seed=2 --set '8.filename_prefix="phase7/test-sfx-seed2"' || { say "sfx rerun FAILED"; exit 1; }
 f=$(ls /srv/forge/comfy/output/phase7/test-sfx_*.flac | head -1); level "$f"; nonsilent "$f" && say "sfx: non-silent OK" || { say "sfx: SILENT"; exit 1; }
 
-# 4. foley: MMAudio on the Phase 6 robot clip (comfy/input/phase7/clip.mp4), seed 1
+# 4. foley: MMAudio on the Phase 6 robot clip (comfy/input/phase7/clip.mp4), seed 1.
+#    MMAudio's synchformer assumes 25 fps (a 16 fps clip reads as 3.24 s), so the gate feeds a 25 fps copy like the worker does.
 say "FOLEY gate: workflows/test-foley.json"
+sudo nerdctl run --rm --user 1000:1000 -v /srv/forge:/srv/forge --entrypoint ffmpeg forge/svc-post:0.1.0 -y -v error -i /srv/forge/comfy/input/phase7/clip.mp4 -r 25 -c:v libx264 -crf 18 -pix_fmt yuv420p -an /srv/forge/comfy/input/phase7/clip25.mp4
+
 python3 scripts/run_workflow.py workflows/test-foley.json --timeout 1800 || { say "foley workflow FAILED"; exit 1; }
 f=$(ls /srv/forge/comfy/output/phase7/test-foley_*.flac | head -1); level "$f"; nonsilent "$f" && say "foley: non-silent OK" || { say "foley: SILENT"; exit 1; }
 ls -la /srv/forge/comfy/output/phase7/

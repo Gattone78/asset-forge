@@ -69,7 +69,7 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
       <span class="text-caption text-medium-emphasis">{{ short(job.id) }} · {{ ago(job.created_at) }}</span>
     </div>
     <h2 class="text-h6 mb-1">{{ job.request.prompt }}</h2>
-    <div class="text-caption text-medium-emphasis mb-3">{{ job.request.type }}<span v-if="job.request.image"> ({{ job.request.image.kind }}<span v-if="job.request.image.transparent">, transparent</span><span v-if="job.request.image.seamless">, seamless</span>)</span> · {{ job.request.profile }} · seed {{ job.request.seed }} <span v-if="!isVideo"> · {{ job.request.count }} candidates</span><span v-if="job.request.batch"> · batch <NuxtLink :to="`/?batch=${encodeURIComponent(job.request.batch)}`">{{ job.request.batch }}</NuxtLink></span><span v-if="job.request.rerun_of"> · rerun of {{ short(job.request.rerun_of) }}</span></div>
+    <div class="text-caption text-medium-emphasis mb-3">{{ job.request.type }}<span v-if="job.request.image"> ({{ job.request.image.kind }}<span v-if="job.request.image.transparent">, transparent</span><span v-if="job.request.image.seamless">, seamless</span>)</span> · {{ job.request.profile }} · seed {{ job.request.seed }} <span v-if="!isVideo && !isAudio"> · {{ job.request.count }} candidates</span><span v-if="job.request.batch"> · batch <NuxtLink :to="`/?batch=${encodeURIComponent(job.request.batch)}`">{{ job.request.batch }}</NuxtLink></span><span v-if="job.request.rerun_of"> · rerun of {{ short(job.request.rerun_of) }}</span></div>
     <v-progress-linear v-if="active" :model-value="job.progress * 100" :indeterminate="job.status === 'queued'" color="primary" height="6" rounded class="mb-3" />
     <v-alert v-if="job.error" type="error" density="compact" class="mb-3">{{ job.error }}</v-alert>
     <v-alert v-if="err" type="warning" density="compact" class="mb-3">{{ err }}</v-alert>
@@ -156,9 +156,9 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
       <v-col cols="12" md="5">
         <v-card v-if="sidecar" class="mb-3" title="Asset">
           <v-list density="compact" class="py-0">
-            <v-list-item title="Name" :subtitle="sidecar.files?.glb ?? sidecar.files?.mp4" />
-            <v-list-item v-if="!isVideo" title="Geometry" :subtitle="`${sidecar.geometry?.tris?.toLocaleString()} tris · ${sidecar.geometry?.verts?.toLocaleString()} verts · ${sidecar.geometry?.height_m} m · ${sidecar.geometry?.up_axis}-up, ${sidecar.geometry?.forward} forward, origin at ${sidecar.geometry?.origin}`" />
-            <v-list-item v-if="!isVideo" title="Textures" :subtitle="(sidecar.textures ?? []).map((t: any) => `${t.name} (${t.mimeType})`).join(', ') || 'vertex colours'" />
+            <v-list-item title="Name" :subtitle="sidecar.files?.glb ?? sidecar.files?.mp4 ?? sidecar.files?.wav" />
+            <v-list-item v-if="!isVideo && !isAudio" title="Geometry" :subtitle="`${sidecar.geometry?.tris?.toLocaleString()} tris · ${sidecar.geometry?.verts?.toLocaleString()} verts · ${sidecar.geometry?.height_m} m · ${sidecar.geometry?.up_axis}-up, ${sidecar.geometry?.forward} forward, origin at ${sidecar.geometry?.origin}`" />
+            <v-list-item v-if="!isVideo && !isAudio" title="Textures" :subtitle="(sidecar.textures ?? []).map((t: any) => `${t.name} (${t.mimeType})`).join(', ') || 'vertex colours'" />
             <v-list-item v-if="stage('image')" title="Image stage" :subtitle="`${stage('image').model} · seed ${stage('image').seed} · ${stage('image').steps} steps · ${stage('image').license}`" />
             <v-list-item v-if="stage('3d')" title="3D stage" :subtitle="`${stage('3d').model} · seed ${stage('3d').seed} · res ${stage('3d').resolution} · ${stage('3d').license}`" />
             <v-list-item v-if="stage('rig')" title="Rig stage" :subtitle="`${stage('rig').model} · ${stage('rig').template} · ${stage('rig').bones} bones, root ${stage('rig').skeleton_root} · ${stage('rig').license}`" />
