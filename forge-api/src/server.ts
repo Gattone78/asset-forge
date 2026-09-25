@@ -25,15 +25,20 @@ app.get("/profiles", async () => listProfiles());
 
 app.post("/jobs", async (req, reply) => {
   const b = (req.body ?? {}) as Partial<JobRequest>;
-  if ((!b.prompt && b.type !== "trailer") || !b.profile) return reply.code(400).send({ error: "prompt and profile are required" });
+  if ((!b.prompt && !["trailer", "foley"].includes(b.type)) || !b.profile) return reply.code(400).send({ error: "prompt and profile are required" });
   let profile; try { profile = loadProfile(b.profile); } catch { return reply.code(400).send({ error: `unknown profile ${b.profile}` }); }
   const type = (b.type ?? "creature") as JobRequest["type"];
-  if (!["creature", "prop", "plant", "image", "video", "trailer"].includes(type)) return reply.code(400).send({ error: "bad type" });
+  if (!["creature", "prop", "plant", "image", "video", "trailer", "sfx", "music", "speech", "foley"].includes(type)) return reply.code(400).send({ error: "bad type" });
+  const finished = (jid: string, types: string[]) => { const j = getJob(jid); return j && types.includes(j.request.type) && ["review", "approved"].includes(j.status) ? j : null; };
   if (type === "trailer") {
     const clips = ((b.trailer?.clips ?? []) as string[]).map(String).filter(Boolean);
-    if (!clips.length) return reply.code(400).send({ error: "trailer needs trailer.clips: [job ids of finished video jobs]" });
-    for (const c of clips) { const j = getJob(c); if (!j || j.request.type !== "video" || !["review", "approved"].includes(j.status)) return reply.code(400).send({ error: `clip ${c} is not a finished video job` }); }
+    if (!clips.length) return reply.code(400).send({ error: "trailer needs trailer.clips: [job ids of finished video or foley jobs]" });
+    for (const c of clips) if (!finished(c, ["video", "foley"])) return reply.code(400).send({ error: `clip ${c} is not a finished video/foley job` });
+    if (b.trailer?.music && !finished(String(b.trailer.music), ["music"])) return reply.code(400).send({ error: `music ${b.trailer.music} is not a finished music job` });
+    for (const n of (b.trailer?.narration ?? []) as any[]) if (!n?.speech || !finished(String(n.speech), ["speech"])) return reply.code(400).send({ error: `narration ${n?.speech} is not a finished speech job` });
   }
+  if (type === "foley" && !finished(String(b.audio?.clip ?? ""), ["video"])) return reply.code(400).send({ error: "foley needs audio.clip: a finished video job id" });
+  const au = (b.audio ?? {}) as NonNullable<JobRequest["audio"]>;
   const vid = (b.video ?? {}) as NonNullable<JobRequest["video"]>;
   const img = (b.image ?? {}) as NonNullable<JobRequest["image"]>;
   const kind = (["sprite", "texture", "tile"].includes(img.kind ?? "") ? img.kind : "sprite") as "sprite" | "texture" | "tile";
@@ -46,8 +51,16 @@ app.post("/jobs", async (req, reply) => {
     image: type === "image" ? { kind, transparent: img.transparent ?? kind === "sprite", seamless: img.seamless ?? kind !== "sprite", size: img.size ? Number(img.size) : undefined } : undefined,
     video: type === "video" ? { duration_s: vid.duration_s ? Math.min(10, Math.max(1, Number(vid.duration_s))) : undefined, fps: vid.fps ? Number(vid.fps) : undefined,
       aspect: vid.aspect === "9:16" ? "9:16" : "16:9", init_image: vid.init_image ? String(vid.init_image) : undefined, fast: vid.fast ?? true } : undefined,
-    trailer: type === "trailer" ? { clips: (b.trailer!.clips as string[]).map(String), title: b.trailer?.title, subtitle: b.trailer?.subtitle, xfade_s: b.trailer?.xfade_s, card_s: b.trailer?.card_s } : undefined,
+    trailer: type === "trailer" ? { clips: (b.trailer!.clips as string[]).map(String), title: b.trailer?.title, subtitle: b.trailer?.subtitle, xfade_s: b.trailer?.xfade_s, card_s: b.trailer?.card_s,
+      music: b.trailer?.music ? String(b.trailer.music) : undefined, music_db: b.trailer?.music_db !== undefined ? Number(b.trailer.music_db) : undefined,
+      narration: ((b.trailer?.narration ?? []) as any[]).map((n) => ({ speech: String(n.speech), at_s: Number(n.at_s ?? 0) })) } : undefined,
+    audio: ["sfx", "music", "speech", "foley"].includes(type) ? {
+      duration_s: au.duration_s !== undefined ? Math.min(type === "music" ? 300 : 30, Math.max(0.5, Number(au.duration_s))) : undefined,
+      count: type === "sfx" ? Math.min(8, Math.max(1, Number(au.count ?? 4))) : 1, loop: type === "music" ? !!au.loop : undefined,
+      bpm: au.bpm ? Number(au.bpm) : undefined, key: au.key, voice: au.voice, speed: au.speed ? Number(au.speed) : undefined, clip: type === "foley" ? String(au.clip) : undefined,
+      sample_rate: au.sample_rate ? Number(au.sample_rate) : undefined, channels: au.channels === "stereo" ? "stereo" : au.channels === "mono" ? "mono" : undefined } : undefined,
   };
+  if (type === "foley") jr.prompt = jr.prompt || "";
   if (type === "trailer") jr.prompt = jr.prompt || `trailer: ${jr.trailer!.title ?? jr.trailer!.clips.length + " clips"}`;
   if (jr.rig && type !== "creature") return reply.code(400).send({ error: "rigging applies to creatures only (props and plants get named pivots, req §1)" });
   if (jr.views === "multi") return reply.code(501).send({ error: "views=multi is not effective: ComfyUI core's Trellis2Conditioning treats an image batch as separate objects, so the result equals the front-only run (Phase 2 bake-off, docs/phase-2.md). Multi-view needs the Pixal3D multi-view model; not wired yet." });

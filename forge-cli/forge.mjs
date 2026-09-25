@@ -74,12 +74,21 @@ switch (cmd) {
     if (sub === "trailer") {
       const file = rest[0]; if (!file) die("usage: forge job trailer <file.yaml>   (keys: title, subtitle, profile, xfade_s, card_s, clips: [- job id ...])");
       const spec = readBatch(file);
+      // Phase 7: `music: <music job id>` and `narration: <speech job id>@<seconds>[, …]`
+      const narration = spec.narration ? String(spec.narration).split(",").map((s) => { const [speech, at] = s.trim().split("@"); return { speech, at_s: Number(at ?? 0) }; }) : undefined;
       const body = { type: "trailer", profile: spec.profile, prompt: spec.title ? `trailer: ${spec.title}` : undefined,
-        trailer: { clips: spec.prompts, title: spec.title, subtitle: spec.subtitle, xfade_s: spec.xfade_s ? Number(spec.xfade_s) : undefined, card_s: spec.card_s ? Number(spec.card_s) : undefined } };
+        trailer: { clips: spec.prompts, title: spec.title, subtitle: spec.subtitle, xfade_s: spec.xfade_s ? Number(spec.xfade_s) : undefined, card_s: spec.card_s ? Number(spec.card_s) : undefined,
+          music: spec.music, music_db: spec.music_db !== undefined ? Number(spec.music_db) : undefined, narration } };
       const j = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
       console.log(j.id); break;
     }
-    if (!["creature", "prop", "plant", "image", "video"].includes(sub)) die('usage: forge job creature|prop|plant|image|video "prompt" [--profile P] [--seed N] [--count N] [--height M] [--views front|multi] [--rig] [--batch L]\n       forge job image "prompt" [--kind sprite|texture|tile] [--transparent|--opaque] [--seamless|--no-seamless] [--size N]\n       forge job video "prompt" [--duration 5] [--fps 16] [--aspect 16:9|9:16] [--init <jobid[/path]>] [--slow]\n       forge job batch <file.yaml> | forge job trailer <file.yaml>');
+    if (sub === "foley") {
+      const clip = rest[0]; if (!clip) die('usage: forge job foley <video job id> ["what it should sound like"] [--seed N] [--profile P]');
+      const body = { type: "foley", prompt: rest.slice(1).join(" "), profile: flags.profile ?? "meadowbots-flat", seed: flags.seed !== undefined ? Number(flags.seed) : undefined, batch: flags.batch, audio: { clip } };
+      const j = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
+      console.log(j.id); break;
+    }
+    if (!["creature", "prop", "plant", "image", "video", "sfx", "music", "speech"].includes(sub)) die('usage: forge job creature|prop|plant|image|video|sfx|music|speech "prompt" [--profile P] [--seed N] [--count N] [--height M] [--views front|multi] [--rig] [--batch L]\n       forge job image "prompt" [--kind sprite|texture|tile] [--transparent|--opaque] [--seamless|--no-seamless] [--size N]\n       forge job video "prompt" [--duration 5] [--fps 16] [--aspect 16:9|9:16] [--init <jobid[/path]>] [--slow]\n       forge job sfx "prompt" [--duration 4] [--count 4] [--stereo]      forge job music "prompt" [--duration 30] [--loop] [--bpm N] [--key "C major"]\n       forge job speech "text" [--voice af_heart] [--speed 1.0]           forge job foley <video job id> ["prompt"]\n       forge job batch <file.yaml> | forge job trailer <file.yaml>');
     const prompt = rest.join(" "); if (!prompt) die("prompt required");
     const body = { type: sub, prompt, profile: flags.profile ?? "meadowbots-flat", seed: flags.seed !== undefined ? Number(flags.seed) : undefined,
       count: flags.count ? Number(flags.count) : undefined, height_m: flags.height ? Number(flags.height) : undefined, views: flags.views, rig: !!flags.rig, batch: flags.batch };
@@ -87,6 +96,9 @@ switch (cmd) {
       seamless: flags.seamless ? true : flags["no-seamless"] ? false : undefined, size: flags.size ? Number(flags.size) : undefined };
     if (sub === "video") body.video = { duration_s: flags.duration ? Number(flags.duration) : undefined, fps: flags.fps ? Number(flags.fps) : undefined,
       aspect: flags.aspect, init_image: flags.init, fast: flags.slow ? false : undefined };
+    if (["sfx", "music", "speech"].includes(sub)) body.audio = { duration_s: flags.duration ? Number(flags.duration) : undefined, count: flags.count ? Number(flags.count) : undefined,
+      loop: !!flags.loop, bpm: flags.bpm ? Number(flags.bpm) : undefined, key: flags.key, voice: flags.voice, speed: flags.speed ? Number(flags.speed) : undefined,
+      channels: flags.stereo ? "stereo" : flags.mono ? "mono" : undefined };
     const j = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
     console.log(j.id); break;
   }
@@ -124,5 +136,5 @@ switch (cmd) {
   case "batches": for (const b of await api("/batches")) console.log(`${b.batch}  ${b.n} job(s)  ${b.first}`); break;
   case "health": console.log(JSON.stringify(await api("/health"), null, 1)); break;
   case "profiles": for (const p of await api("/profiles")) console.log(`${p.name}  (${p.game})  ${p.file}`); break;
-  default: die("commands: job (creature|prop|plant|image|video|batch|trailer), status, watch, list, get, approve, reject, rerun, batches, health, profiles");
+  default: die("commands: job (creature|prop|plant|image|video|sfx|music|speech|foley|batch|trailer), status, watch, list, get, approve, reject, rerun, batches, health, profiles");
 }

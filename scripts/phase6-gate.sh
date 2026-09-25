@@ -13,7 +13,7 @@ if grep -q "^FAILED" /srv/forge/models/download-wan22.log; then say "download FA
 say "models:"; ls -la /srv/forge/models/diffusion_models/wan2* /srv/forge/models/loras/wan2* /srv/forge/models/text_encoders/umt5* /srv/forge/models/vae/wan*
 
 # 1. comfyui up (forge-api stops it again after its idle timeout once a job has run; the gate does not go through forge-api)
-sudo nerdctl compose -f compose.yaml up -d comfyui
+sudo nerdctl compose -f compose.yaml up -d --force-recreate comfyui
 for i in $(seq 1 60); do curl -sf localhost:8188/system_stats >/dev/null && break; sleep 5; done
 curl -sf localhost:8188/system_stats | python3 -c 'import sys,json; s=json.load(sys.stdin); print("comfyui", s["system"]["comfyui_version"], "torch", s["system"]["pytorch_version"], s["devices"][0]["name"])' || { say "comfyui not up"; exit 1; }
 

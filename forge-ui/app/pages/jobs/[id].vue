@@ -29,7 +29,9 @@ const sidecar = computed(() => assets.value?.sidecar);
 const logTail = computed(() => log.value.split("\n").filter(Boolean).slice(-40).join("\n"));
 const picked = computed(() => candidates.value?.picked as string | undefined);
 const isImage = computed(() => job.value?.request.type === "image");
-const isVideo = computed(() => job.value?.request.type === "video" || job.value?.request.type === "trailer");
+const isVideo = computed(() => ["video", "trailer", "foley"].includes(job.value?.request.type ?? ""));
+const isAudio = computed(() => ["sfx", "music", "speech", "foley"].includes(job.value?.request.type ?? ""));
+const audioEntries = computed(() => (sidecar.value?.audios ?? (sidecar.value?.audio?.kind === "speech" ? [{ index: 1, ...sidecar.value.audio, ...sidecar.value.files }] : [])) as any[]);
 const videoMp4 = computed(() => outFiles.value.find((f) => f.path.endsWith(".mp4"))?.path);
 const videoWebm = computed(() => outFiles.value.find((f) => f.path.endsWith(".webm"))?.path);
 const videoPoster = computed(() => outFiles.value.find((f) => f.path.endsWith("-poster.png"))?.path);
@@ -67,7 +69,7 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
       <span class="text-caption text-medium-emphasis">{{ short(job.id) }} · {{ ago(job.created_at) }}</span>
     </div>
     <h2 class="text-h6 mb-1">{{ job.request.prompt }}</h2>
-    <div class="text-caption text-medium-emphasis mb-3">{{ job.request.type }}<span v-if="job.request.image"> ({{ job.request.image.kind }}<span v-if="job.request.image.transparent">, transparent</span><span v-if="job.request.image.seamless">, seamless</span>)</span> · {{ job.request.profile }} · seed {{ job.request.seed }} <span v-if="!isVideo"> · {{ job.request.count }} candidates</span><span v-if="job.request.batch"> · batch <NuxtLink :to="`/?batch=${encodeURIComponent(job.request.batch)}`">{{ job.request.batch }}</NuxtLink></span><span v-if="job.request.rerun_of"> · rerun of {{ short(job.request.rerun_of) }}</span></div>
+    <div class="text-caption text-medium-emphasis mb-3">{{ job.request.type }}<span v-if="job.request.image"> ({{ job.request.image.kind }}<span v-if="job.request.image.transparent">, transparent</span><span v-if="job.request.image.seamless">, seamless</span>)</span> · {{ job.request.profile }} · seed {{ job.request.seed }} <span v-if="!isVideo && !isAudio"> · {{ job.request.count }} candidates</span><span v-if="job.request.batch"> · batch <NuxtLink :to="`/?batch=${encodeURIComponent(job.request.batch)}`">{{ job.request.batch }}</NuxtLink></span><span v-if="job.request.rerun_of"> · rerun of {{ short(job.request.rerun_of) }}</span></div>
     <v-progress-linear v-if="active" :model-value="job.progress * 100" :indeterminate="job.status === 'queued'" color="primary" height="6" rounded class="mb-3" />
     <v-alert v-if="job.error" type="error" density="compact" class="mb-3">{{ job.error }}</v-alert>
     <v-alert v-if="err" type="warning" density="compact" class="mb-3">{{ err }}</v-alert>
@@ -96,6 +98,23 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
           <v-card-text v-if="sidecar?.video || sidecar?.trailer" class="text-caption py-2">
             <span v-if="sidecar.video">{{ sidecar.video.width }}×{{ sidecar.video.height }} · {{ sidecar.video.fps }} fps · {{ sidecar.video.duration_s }} s · {{ sidecar.video.frames }} frames<span v-if="stage('video')"> · {{ stage('video').mode }} · seed {{ stage('video').seed }} · {{ stage('video').steps }} steps · {{ stage('video').seconds }} s on the GPU</span><span :class="sidecar.video.non_blank ? 'text-green' : 'text-red'"> · {{ sidecar.video.non_blank ? 'non-blank, has motion' : 'BLANK OR STATIC' }}</span></span>
             <span v-else>trailer · {{ sidecar.trailer.clips.length }} clips · {{ sidecar.trailer.width }}×{{ sidecar.trailer.height }} · {{ sidecar.trailer.duration_s }} s</span>
+          </v-card-text>
+        </v-card>
+        <v-card v-if="isAudio && audioEntries.length" class="mb-3" :title="sidecar.audio?.kind === 'speech' ? 'Narration' : sidecar.audio?.kind === 'music' ? 'Music' : sidecar.audio?.kind === 'foley' ? 'Foley track' : 'Sound effects'">
+          <v-card-text>
+            <div v-for="e in audioEntries" :key="e.index" class="mb-4">
+              <img v-if="e.waveform" :src="api.assetUrl(job.id, 'out/' + e.waveform)" style="width: 100%; display: block; border-radius: 8px; background: #fff" />
+              <audio controls preload="metadata" style="width: 100%; margin-top: 4px">
+                <source :src="api.assetUrl(job.id, 'out/' + e.ogg)" type="audio/ogg" />
+                <source :src="api.assetUrl(job.id, 'out/' + e.wav)" type="audio/wav" />
+              </audio>
+              <div class="text-caption text-medium-emphasis">
+                <span v-if="audioEntries.length > 1">#{{ e.index }} · </span>{{ e.duration_s }} s · {{ e.sample_rate }} Hz · {{ e.channels === 1 ? 'mono' : e.channels === 2 ? 'stereo' : e.channels }}<span v-if="e.lufs != null"> · {{ e.lufs }} LUFS</span><span v-if="e.peak_dbfs != null"> · peak {{ e.peak_dbfs }} dBFS</span><span v-if="e.loop"> · loop seam {{ e.loop_seam_db }} dB</span>
+                <span :class="e.non_silent ? 'text-green' : 'text-red'"> · {{ e.non_silent ? 'non-silent' : 'SILENT' }}</span>
+                · <a :href="api.assetUrl(job.id, 'out/' + e.wav)" download>WAV</a> · <a :href="api.assetUrl(job.id, 'out/' + e.ogg)" download>OGG</a><a v-if="e.mp3" :href="api.assetUrl(job.id, 'out/' + e.mp3)" download> · MP3</a>
+              </div>
+            </div>
+            <div v-if="stage('audio') || stage('speech')" class="text-caption">{{ (stage('audio') ?? stage('speech')).model }}<span v-if="stage('audio')"> · seed {{ stage('audio').seed }} · {{ stage('audio').steps }} steps · {{ stage('audio').seconds }} s on the GPU</span><span v-if="stage('speech')"> · voice {{ stage('speech').voice }}</span> · {{ (stage('audio') ?? stage('speech')).license }}</div>
           </v-card-text>
         </v-card>
         <v-card v-if="isImage && imageEntries.length" class="mb-3" title="Images" :subtitle="`${imageEntries.length} candidate(s)` + (imageEntries[0]?.alpha ? ' · transparent PNG' : '')">
@@ -137,9 +156,9 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
       <v-col cols="12" md="5">
         <v-card v-if="sidecar" class="mb-3" title="Asset">
           <v-list density="compact" class="py-0">
-            <v-list-item title="Name" :subtitle="sidecar.files?.glb ?? sidecar.files?.mp4" />
-            <v-list-item v-if="!isVideo" title="Geometry" :subtitle="`${sidecar.geometry?.tris?.toLocaleString()} tris · ${sidecar.geometry?.verts?.toLocaleString()} verts · ${sidecar.geometry?.height_m} m · ${sidecar.geometry?.up_axis}-up, ${sidecar.geometry?.forward} forward, origin at ${sidecar.geometry?.origin}`" />
-            <v-list-item v-if="!isVideo" title="Textures" :subtitle="(sidecar.textures ?? []).map((t: any) => `${t.name} (${t.mimeType})`).join(', ') || 'vertex colours'" />
+            <v-list-item title="Name" :subtitle="sidecar.files?.glb ?? sidecar.files?.mp4 ?? sidecar.files?.wav" />
+            <v-list-item v-if="!isVideo && !isAudio" title="Geometry" :subtitle="`${sidecar.geometry?.tris?.toLocaleString()} tris · ${sidecar.geometry?.verts?.toLocaleString()} verts · ${sidecar.geometry?.height_m} m · ${sidecar.geometry?.up_axis}-up, ${sidecar.geometry?.forward} forward, origin at ${sidecar.geometry?.origin}`" />
+            <v-list-item v-if="!isVideo && !isAudio" title="Textures" :subtitle="(sidecar.textures ?? []).map((t: any) => `${t.name} (${t.mimeType})`).join(', ') || 'vertex colours'" />
             <v-list-item v-if="stage('image')" title="Image stage" :subtitle="`${stage('image').model} · seed ${stage('image').seed} · ${stage('image').steps} steps · ${stage('image').license}`" />
             <v-list-item v-if="stage('3d')" title="3D stage" :subtitle="`${stage('3d').model} · seed ${stage('3d').seed} · res ${stage('3d').resolution} · ${stage('3d').license}`" />
             <v-list-item v-if="stage('rig')" title="Rig stage" :subtitle="`${stage('rig').model} · ${stage('rig').template} · ${stage('rig').bones} bones, root ${stage('rig').skeleton_root} · ${stage('rig').license}`" />

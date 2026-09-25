@@ -1,0 +1,117 @@
+{
+ "1": {
+  "class_type": "CheckpointLoaderSimple",
+  "_meta": {
+   "title": "Load Stable Audio 3 Small-SFX"
+  },
+  "inputs": {
+   "ckpt_name": "stable_audio_3_small_sfx.safetensors"
+  }
+ },
+ "2": {
+  "class_type": "CLIPLoader",
+  "_meta": {
+   "title": "Load t5gemma"
+  },
+  "inputs": {
+   "clip_name": "t5gemma_b_b_ul2.safetensors",
+   "type": "stable_audio",
+   "device": "default"
+  }
+ },
+ "3": {
+  "class_type": "CLIPTextEncode",
+  "_meta": {
+   "title": "Prompt"
+  },
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": "a small robot beeps twice and whirs, cute toy servo, clean, no music"
+  }
+ },
+ "4": {
+  "class_type": "CLIPTextEncode",
+  "_meta": {
+   "title": "Negative"
+  },
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": ""
+  }
+ },
+ "5": {
+  "class_type": "EmptyLatentAudio",
+  "_meta": {
+   "title": "Latent"
+  },
+  "inputs": {
+   "seconds": 5,
+   "batch_size": 1
+  }
+ },
+ "6": {
+  "class_type": "KSampler",
+  "_meta": {
+   "title": "Sampler"
+  },
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "positive": [
+    "3",
+    0
+   ],
+   "negative": [
+    "4",
+    0
+   ],
+   "latent_image": [
+    "5",
+    0
+   ],
+   "seed": 1,
+   "steps": 50,
+   "cfg": 7,
+   "sampler_name": "lcm",
+   "scheduler": "simple",
+   "denoise": 1
+  }
+ },
+ "7": {
+  "class_type": "VAEDecodeAudio",
+  "_meta": {
+   "title": "Decode"
+  },
+  "inputs": {
+   "samples": [
+    "6",
+    0
+   ],
+   "vae": [
+    "1",
+    2
+   ]
+  }
+ },
+ "8": {
+  "class_type": "SaveAudio",
+  "_meta": {
+   "title": "Save audio"
+  },
+  "inputs": {
+   "audio": [
+    "7",
+    0
+   ],
+   "filename_prefix": "phase7/test-sfx"
+  }
+ }
+}

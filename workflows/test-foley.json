@@ -1,0 +1,87 @@
+{
+ "1": {
+  "class_type": "LoadVideo",
+  "_meta": {
+   "title": "Load clip"
+  },
+  "inputs": {
+   "file": "phase7/clip25.mp4"
+  }
+ },
+ "2": {
+  "class_type": "GetVideoComponents",
+  "_meta": {
+   "title": "Frames"
+  },
+  "inputs": {
+   "video": [
+    "1",
+    0
+   ]
+  }
+ },
+ "3": {
+  "class_type": "MMAudioModelLoader",
+  "_meta": {
+   "title": "Load MMAudio"
+  },
+  "inputs": {
+   "mmaudio_model": "mmaudio_large_44k_v2_fp16.safetensors",
+   "base_precision": "fp16"
+  }
+ },
+ "4": {
+  "class_type": "MMAudioFeatureUtilsLoader",
+  "_meta": {
+   "title": "Load MMAudio features"
+  },
+  "inputs": {
+   "vae_model": "mmaudio_vae_44k_fp16.safetensors",
+   "synchformer_model": "mmaudio_synchformer_fp16.safetensors",
+   "clip_model": "apple_DFN5B-CLIP-ViT-H-14-384_fp16.safetensors",
+   "mode": "44k",
+   "precision": "fp16"
+  }
+ },
+ "5": {
+  "class_type": "MMAudioSampler",
+  "_meta": {
+   "title": "Sampler"
+  },
+  "inputs": {
+   "mmaudio_model": [
+    "3",
+    0
+   ],
+   "feature_utils": [
+    "4",
+    0
+   ],
+   "images": [
+    "2",
+    0
+   ],
+   "duration": 5,
+   "steps": 25,
+   "cfg": 4.5,
+   "seed": 1,
+   "prompt": "",
+   "negative_prompt": "music, speech, voice",
+   "mask_away_clip": false,
+   "force_offload": true
+  }
+ },
+ "6": {
+  "class_type": "SaveAudio",
+  "_meta": {
+   "title": "Save audio"
+  },
+  "inputs": {
+   "audio": [
+    "5",
+    0
+   ],
+   "filename_prefix": "phase7/test-foley"
+  }
+ }
+}

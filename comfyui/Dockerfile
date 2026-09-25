@@ -10,6 +10,7 @@ ARG COMFYUI_COMMIT=ee71d5c4993f29086b27fde1629a945ae48425bf
 ARG TORCH_VERSION=2.14.0
 ARG TORCH_INDEX=https://download.pytorch.org/whl/cu130
 ARG UNIRIG_COMMIT=69ee59dc459d2da7cb0291930c1f944886c31d7c
+ARG MMAUDIO_COMMIT=8eaeb72edc3a
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -19,6 +20,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-venv python3-dev git ca-certificates curl \
       libgl1 libglib2.0-0 libegl1 libgomp1 \
+      build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # The CUDA base image ships an "ubuntu" user at uid 1000; rename it so the container user matches hqadmin (uid 1000) on the host bind mounts.
@@ -50,8 +52,18 @@ RUN git clone -q https://github.com/PozzettiAndrea/ComfyUI-UniRig.git /opt/Comfy
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /opt/ComfyUI/custom_nodes/ComfyUI-UniRig/requirements.txt
 
+# MMAudio video/text-to-audio node (Phase 7 foley), MIT, pinned. Pure-Python deps; BigVGAN and the model
+# weights are read from models/mmaudio (models/mmaudio/nvidia/bigvgan_v2_44khz_128band_512x is pre-downloaded,
+# so the node's snapshot_download never runs).
+RUN git clone -q https://github.com/kijai/ComfyUI-MMAudio.git /opt/ComfyUI/custom_nodes/ComfyUI-MMAudio && \
+    cd /opt/ComfyUI/custom_nodes/ComfyUI-MMAudio && git checkout -q "${MMAUDIO_COMMIT}" && \
+    git rev-parse HEAD > .forge-commit
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /opt/ComfyUI/custom_nodes/ComfyUI-MMAudio/requirements.txt && \
+    python -c "import torch, torchaudio, timm, open_clip, torchdiffeq, librosa; print('torch', torch.__version__, 'torchaudio', torchaudio.__version__, 'timm', timm.__version__)"
+
 # Record resolved versions for docs/phase-1.md
-RUN pip freeze | grep -iE "^(torch|torchvision|torchaudio|comfyui-frontend-package|comfyui-workflow-templates|numpy|transformers|safetensors|trimesh|comfy-env|comfy-3d-viewers)=" > /opt/ComfyUI/.forge-versions
+RUN pip freeze | grep -iE "^(torch|torchvision|torchaudio|comfyui-frontend-package|comfyui-workflow-templates|numpy|transformers|safetensors|trimesh|comfy-env|comfy-3d-viewers|timm|open-clip-torch|torchdiffeq|librosa)=" > /opt/ComfyUI/.forge-versions
 
 RUN mkdir -p /opt/ComfyUI/models /opt/ComfyUI/output /opt/ComfyUI/input /opt/ComfyUI/temp /opt/ComfyUI/user /opt/ComfyUI/ce && \
     chown -R comfy:comfy /opt/ComfyUI

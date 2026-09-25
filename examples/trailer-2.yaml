@@ -1,0 +1,13 @@
+# forge job trailer examples/trailer-2.yaml  -- the Phase 7 acceptance trailer: foley clip + two video clips, music job under a narration job at 2.5 s (job ids on the Forge VM as of 2026-09-25)
+profile: meadowbots-flat
+title: Meadowbots
+subtitle: a garden of little robots
+xfade_s: 0.5
+card_s: 2
+music: 89a34294-2c85-422c-a984-1e174e5c71fc
+music_db: -14
+narration: 39580e5e-8143-4d9c-b8c0-74dd5fd5ea92@2.5
+prompts:
+  - ea9b84ed-ba3e-433e-89aa-87337e698e3b
+  - ade82872-aa5d-4d31-8296-a17f0f91b4be
+  - 21bfdce9-d1d8-4330-a2a4-59cbda723f3d

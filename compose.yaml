@@ -8,7 +8,7 @@ services:
     build:
       context: ./comfyui
       dockerfile: Dockerfile
-    image: forge/comfyui:0.1.0
+    image: forge/comfyui:0.1.1
     restart: "no"
     ports:
       - "8188:8188"
@@ -37,6 +37,19 @@ services:
       context: ./svc-post
       dockerfile: Dockerfile
     image: forge/svc-post:0.1.0
+    restart: "no"
+    profiles: ["tools"]
+    user: "1000:1000"
+    volumes:
+      - ${FORGE_DATA:-/srv/forge}:/srv/forge
+    working_dir: /srv/forge
+
+  # svc-audio (Phase 7): CPU-only narration (Kokoro-82M) + ffmpeg, run per job like svc-post; never touches the GPU.
+  svc-audio:
+    build:
+      context: ./svc-audio
+      dockerfile: Dockerfile
+    image: forge/svc-audio:0.1.0
     restart: "no"
     profiles: ["tools"]
     user: "1000:1000"

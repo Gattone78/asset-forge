@@ -139,3 +139,10 @@ sr0     1024M rom
 - **Video jobs** keep the ComfyUI clip in `raw/clip-comfyui.mp4` and write `out/<name>.mp4`, `.webm`, `-poster.png`, `thumb.png`; trailers are CPU-only (`svc-post --mode trailer`) and never start comfyui.
 - **Measured VRAM / time:** Wan 2.2 14B fp8 pair peaks at **39.4 GB** during sampling and stays **34.9 GB resident** while loaded; T2V/I2V 5 s @ 832×480 in 28–40 s warm, 42 s cold. `FORGE_MIN_FREE_VRAM_GB=80` still fits (one model family at a time).
 - **Disk after Phase 6:** `/srv/forge` 191 GB used / 202 GB free (models 114 GB); root disk 101 GB free with comfyui stopped.
+
+## Phase 7 additions (2026-09-25)
+
+- **Audio models on disk** (19.5 GB, `/srv/forge/models/download-audio.sh`, all ungated): ACE-Step 1.5 turbo (`diffusion_models/acestep_v1.5_turbo`, `text_encoders/qwen_{0.6b,1.7b}_ace15`, `vae/ace_1.5_vae`), Stable Audio 3 Small-SFX (`checkpoints/stable_audio_3_small_sfx`, `text_encoders/t5gemma_b_b_ul2`), MMAudio (`mmaudio/*_fp16.safetensors`, BigVGAN under `mmaudio/nvidia/bigvgan_v2_44khz_128band_512x`), Kokoro (`kokoro/` with 54 voices). `/srv/forge/models` is now 134 GB.
+- **Images:** `forge/comfyui:0.1.1` (9.4 GB: 0.1.0 + `build-essential` + ComfyUI-MMAudio @ `8eaeb72e` and its pip deps; `compose.yaml` points at it; **remove the old container once after any image bump**, forge-api now starts comfyui with `--force-recreate`), `forge/svc-audio:0.1.0` (2.1 GB, Python 3.12 + CPU torch 2.8 + kokoro 0.9.4 + spaCy `en_core_web_sm` + espeak-ng + ffmpeg, runs as uid 1000, `FORGE_SVC_AUDIO_IMAGE`), `forge/svc-post:0.1.0` rebuilt (audio mode, trailer audio). `forge/comfyui:0.1.0` was removed after the Phase 7 acceptance (root disk 62 % used).
+- **Measured:** ACE-Step 1.5 peak 10.4 GB VRAM (12 s cold / 4 s warm for 30 s); SA3 Small-SFX 2.6 GB (4.5 s for a 4 × 4 s batch); MMAudio **42.6 GB** peak (14 s per 5 s clip); Kokoro 4–6 s per sentence on the CPU. All within `FORGE_MIN_FREE_VRAM_GB=80`.
+- **Torch 2.14 native Triton kernels** need a C compiler in the container at first use; without it the first ACE-Step run fails with `Failed to find C compiler`.
