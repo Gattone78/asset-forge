@@ -55,7 +55,8 @@ All through the CLI from the workstation against `http://192.168.1.51:8080`, bat
 - `forge job speech "Welcome to Meadowbots, a garden of little robots. Plant, tinker, and make friends."` → job `39580e5e` after **6 s on the CPU** (comfyui untouched): 5.7 s, −16.5 LUFS, voice `af_heart`. Copy: `docs/phase-7/speech-welcome.ogg`.
 - `forge job foley e45105f1 "a small robot watering flowers, servo whirs, water trickling, garden birds" --seed 704` → job `ea9b84ed` after **14 s** (12.5 s GPU): a 5.1 s stereo track synchronised to the Phase 6 robot clip and `…ea9b84.mp4`, the clip with that track. Copy: `docs/phase-7/foley-robot-watering.mp4`.
 - `forge job trailer examples/trailer-2.yaml` (the foley clip + two Phase 6 clips, `music:` the loop above at −14 dB, `narration:` the speech job at 2.5 s) → job `21e7fb2c` after **2 s**, no GPU: 15.75 s, H.264 + **AAC 48 kHz stereo**, 1.9 MB. Plays with sound in the browser pane at a 375×812 phone viewport: title card, narration over the ducked music, the robot's foley under the first clip, music fading out at the end. Copy: `docs/phase-7/trailer-2-with-sound.mp4`.
-- **comfyui idle stop:** IDLE_LINE
+- **comfyui idle stop:** speech and trailer jobs never start comfyui; after the last GPU job (foley) forge-api's timer stayed armed through the CPU-only trailer runs (each job re-arms it) with `idle_stop_at` 17:06:07 UTC. The stop (VRAM back to 2 MiB) is recorded in the PR thread; the mechanism is unchanged since Phase 2.
+- **Cleanup:** the superseded `forge/comfyui:0.1.0` image was removed after acceptance (root disk 66 % → 62 %).
 
 ## Numbers
 
