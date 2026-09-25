@@ -2,7 +2,7 @@
 // stops it after FORGE_GPU_IDLE_TIMEOUT with nothing queued.
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, copyFileSync, writeFileSync, rmSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, resolve } from "node:path";
 import sharp from "sharp";
 import { config, paths } from "./config.ts";
 import * as comfy from "./comfy.ts";
@@ -62,8 +62,28 @@ async function runJob(job0: Job): Promise<void> {
     const profile = loadProfile(req.profile);
     log(`start: ${req.type} "${req.prompt}" profile=${profile.name} seed=${req.seed} views=${req.views ?? profile.image.views ?? "front"}`);
     if (req.restart_comfy && await comfy.isUp()) { log("rerun with the same seed: restarting comfyui for a cold, reproducible run"); await comfy.stop(log); }
+    if (req.type === "trailer") {
+      // ---- trailer (Phase 6): CPU only, no GPU; stitches finished video jobs ----
+      set("trailer", 0.2);
+      const name = `${profile.game}-trailer-${slug(req.trailer?.title ?? "trailer")}-${id.slice(0, 6)}`;
+      const files = await stageTrailer(id, req, profile, name, log);
+      updateJob(id, { status: "review", stage: "review", progress: 1, result: { name, files, seconds: (Date.now() - t0) / 1000 } });
+      log(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s -> ${name}`);
+      return;
+    }
+
     set("starting", 0);
     await comfy.ensureUp(log);
+
+    if (req.type === "video") {
+      // ---- video (Phase 6): Wan 2.2 text-to-video or image-to-video, then ffmpeg post ----
+      set("video", 0.1);
+      const name = `${profile.game}-video-${slug(req.prompt)}-${id.slice(0, 6)}`;
+      const res = await stageVideo(id, req, profile, name, log, (p) => set("video", 0.1 + 0.8 * p));
+      updateJob(id, { status: "review", stage: "review", progress: 1, result: { name, files: res.files, video: res.video, seconds: (Date.now() - t0) / 1000 } });
+      log(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s -> ${name}`);
+      return;
+    }
 
     if (req.type === "image") {
       // ---- 2D job (Phase 5): sprites / textures / tiles, no 3D stages ----
@@ -204,6 +224,115 @@ async function stage3d(id: string, req: Job["request"], profile: Profile, refs: 
   if (!out["remeshed-painted"] || !out["painted"] || !out["raw"]) throw new Error("3d stage did not produce raw/painted/remeshed-painted GLBs: " + Object.keys(out).join(","));
   onP(1);
   return out;
+}
+
+/** Resolve an init_image reference: "<jobid>" (its thumb), "<jobid>/<relative path>" or an absolute path under FORGE_DATA. */
+function resolveInitImage(ref: string): string {
+  if (ref.startsWith("/")) { const p = resolve(ref); if (!p.startsWith(config.data) || !existsSync(p)) throw new Error("init_image path not found or outside " + config.data); return p; }
+  const [jid, ...rest] = ref.split("/");
+  const src = getJob(jid);
+  if (!src) throw new Error("init_image job not found: " + jid);
+  const rel = rest.length ? rest.join("/") : "out/thumb.png";
+  const p = join(jobDir(src.id), rel);
+  if (!existsSync(p)) throw new Error("init_image file not found: " + ref);
+  return p;
+}
+
+/** Video stage (Phase 6): Wan 2.2 14B via text-to-video.json or image-to-video.json, then svc-post video mode. */
+async function stageVideo(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void, onP: (p: number) => void): Promise<{ files: string[]; video: any }> {
+  const dir = jobDir(id);
+  const v = req.video ?? {};
+  const pv = ((profile as any).video ?? {}) as Record<string, any>;
+  const fps = v.fps ?? pv.fps ?? 16;
+  const duration = v.duration_s ?? pv.duration_s ?? 5;
+  const frames = Math.max(9, Math.round(duration * fps / 4) * 4 + 1);   // Wan needs 4k+1 frames
+  const aspect = v.aspect ?? "16:9";
+  const width = aspect === "9:16" ? pv.width_9x16 ?? 480 : pv.width_16x9 ?? 832;
+  const height = aspect === "9:16" ? pv.height_9x16 ?? 832 : pv.height_16x9 ?? 480;
+  const fast = v.fast ?? pv.fast ?? true;
+  const init = v.init_image ? resolveInitImage(v.init_image) : null;
+  const wf = loadWorkflow(init ? "image-to-video.json" : "text-to-video.json");
+  setInput(wf, "Prompt", "text", `${req.prompt}, ${pv.style_prompt ?? profile.style_prompt}`);
+  setInput(wf, "Latent", "width", width); setInput(wf, "Latent", "height", height); setInput(wf, "Latent", "length", frames);
+  setAll(wf, ["Sampler high", "Sampler low"], "noise_seed", req.seed);
+  if (!fast) {
+    // Plain 20-step schedule without the lightx2v LoRAs (template defaults): split at 10, cfg 3.5.
+    setAll(wf, ["LoRA high (lightx2v 4-step)", "LoRA low (lightx2v 4-step)"], "strength_model", 0.0);
+    setAll(wf, ["Sampler high", "Sampler low"], "steps", 20); setAll(wf, ["Sampler high", "Sampler low"], "cfg", 3.5);
+    setInput(wf, "Sampler high", "end_at_step", 10); setInput(wf, "Sampler low", "start_at_step", 10);
+  }
+  setInput(wf, "Create video", "fps", fps);
+  setInput(wf, "Save video", "filename_prefix", `jobs/${id}/out/clip`);
+  if (init) {
+    const inDir = join(config.comfyInput, "jobs", id); mkdirSync(inDir, { recursive: true });
+    copyFileSync(init, join(inDir, "init.png")); copyFileSync(init, join(dir, "refs", "init.png"));
+    setInput(wf, "Init image", "image", `jobs/${id}/init.png`);
+    setInput(wf, "Fit init image", "width", width); setInput(wf, "Fit init image", "height", height);
+  }
+  const t0 = Date.now();
+  let lastTitle = "";
+  const r = await comfy.run(wf, (e) => {
+    if (e.title && e.title !== lastTitle) { lastTitle = e.title; onP(e.title === "Sampler high" ? 0.1 : e.title === "Sampler low" ? 0.5 : e.title === "Decode" ? 0.85 : 0.05); }
+    if (e.value !== undefined && e.max && (e.title === "Sampler high" || e.title === "Sampler low")) onP((e.title === "Sampler high" ? 0.1 : 0.5) + 0.4 * e.value / e.max);
+  });
+  log(`video: ${init ? "image-to-video" : "text-to-video"} ${width}x${height} ${frames} frames @${fps} fps, ${fast ? "4-step lightx2v" : "20-step"}, seed ${req.seed}: ${r.seconds.toFixed(1)}s`);
+  const srcOut = join(config.comfyOutput, "jobs", id, "out");
+  const produced = existsSync(srcOut) ? readdirSync(srcOut).filter((f) => /\.(mp4|mkv|webm)$/.test(f)) : [];
+  if (!produced.length) throw new Error("video stage produced no file");
+  const rawClip = join(dir, "raw", "clip-comfyui.mp4");
+  renameSync(join(srcOut, produced[0]), rawClip);
+  rmSync(join(config.comfyOutput, "jobs", id), { recursive: true, force: true });
+  const extra = {
+    job_id: id, game: profile.game, profile: profile.name, profile_hash: profile._hash, prompt: req.prompt, request: req, batch: req.batch ?? null,
+    stages: [{ stage: "video", model: "Wan-AI/Wan2.2-" + (init ? "I2V" : "T2V") + "-A14B", source: "Comfy-Org/Wan_2.2_ComfyUI_Repackaged fp8_scaled + lightx2v 4-step LoRA, ComfyUI core", seed: req.seed,
+               mode: init ? "image-to-video" : "text-to-video", init_image: v.init_image ?? null, width, height, frames, fps, duration_s: duration, steps: fast ? 4 : 20, cfg: fast ? 1.0 : 3.5, shift: 5.0,
+               license: "Apache-2.0", seconds: Number(r.seconds.toFixed(1)) }],
+  };
+  writeFileSync(join(dir, "out", "sidecar-extra.json"), JSON.stringify(extra, null, 1));
+  const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
+    "--mode", "video", "--in", rawClip, "--out-dir", join(dir, "out"), "--name", name, "--sidecar-extra", join(dir, "out", "sidecar-extra.json")];
+  const t1 = Date.now();
+  await runContainer(args, join(dir, "log.txt"), "svc-post video");
+  rmSync(join(dir, "out", "sidecar-extra.json"), { force: true });
+  const sc = JSON.parse(readFileSync(join(dir, "out", `${name}.sidecar.json`), "utf8"));
+  log(`video: post done in ${((Date.now() - t1) / 1000).toFixed(1)}s, ${sc.video.width}x${sc.video.height} ${sc.video.duration_s}s non_blank=${sc.video.non_blank}`);
+  onP(1);
+  return { files: readdirSync(join(dir, "out")), video: sc.video };
+}
+
+/** Trailer (Phase 6): concatenate finished video jobs' MP4s with crossfades behind a title card. CPU only. */
+async function stageTrailer(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void): Promise<string[]> {
+  const dir = jobDir(id);
+  const t = req.trailer!;
+  const clips: string[] = [];
+  for (const cid of t.clips) {
+    const j = getJob(cid); if (!j) throw new Error("clip job not found: " + cid);
+    const out = join(jobDir(j.id), "out");
+    const mp4 = readdirSync(out).find((f) => f.endsWith(".mp4") && !f.includes("poster"));
+    if (!mp4) throw new Error("clip job has no mp4: " + cid);
+    clips.push(join(out, mp4));
+  }
+  const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
+    "--mode", "trailer", "--clips", clips.join(","), "--out-dir", join(dir, "out"), "--name", name,
+    ...(t.title ? ["--title", t.title] : []), ...(t.subtitle ? ["--subtitle", t.subtitle] : []),
+    ...(t.xfade_s ? ["--xfade", String(t.xfade_s)] : []), ...(t.card_s ? ["--card", String(t.card_s)] : [])];
+  const t0 = Date.now();
+  await runContainer(args, join(dir, "log.txt"), "svc-post trailer");
+  const sc = JSON.parse(readFileSync(join(dir, "out", `${name}.sidecar.json`), "utf8"));
+  sc.job_id = id; sc.game = profile.game; sc.profile = profile.name; sc.request = req; sc.trailer.clip_jobs = t.clips;
+  writeFileSync(join(dir, "out", `${name}.sidecar.json`), JSON.stringify(sc, null, 1));
+  log(`trailer: ${t.clips.length} clips -> ${sc.trailer.duration_s}s in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  return readdirSync(join(dir, "out"));
+}
+
+function runContainer(args: string[], logFile: string, what: string): Promise<void> {
+  return new Promise<void>((res, rej) => {
+    const p = spawn(config.nerdctl[0], args, { stdio: ["ignore", "pipe", "pipe"] });
+    p.stdout.on("data", (d) => appendFileSync(logFile, d));
+    p.stderr.on("data", (d) => appendFileSync(logFile, d));
+    p.on("error", rej);
+    p.on("close", (code) => code === 0 ? res() : rej(new Error(`${what} exited ${code}`)));
+  });
 }
 
 /** 2D stage (Phase 5): N FLUX images, cut out with BiRefNet when transparent, tile-checked when seamless. */

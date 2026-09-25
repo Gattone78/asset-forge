@@ -6,7 +6,7 @@ import { paths } from "./config.ts";
 
 export type JobStatus = "queued" | "running" | "review" | "approved" | "rejected" | "failed";
 export interface JobRequest {
-  type: "creature" | "prop" | "plant" | "image";
+  type: "creature" | "prop" | "plant" | "image" | "video" | "trailer";
   prompt: string;
   profile: string;
   seed: number;
@@ -18,6 +18,8 @@ export interface JobRequest {
   restart_comfy?: boolean;
   batch?: string;
   image?: { kind?: "sprite" | "texture" | "tile"; transparent?: boolean; seamless?: boolean; size?: number };
+  video?: { duration_s?: number; fps?: number; aspect?: "16:9" | "9:16"; init_image?: string; fast?: boolean };
+  trailer?: { clips: string[]; title?: string; subtitle?: string; xfade_s?: number; card_s?: number };
 }
 export interface Job {
   id: string;

@@ -32,7 +32,7 @@ onUnmounted(() => clearInterval(timer));
 // ---- new job ----
 const dialog = ref(false);
 const form = reactive({ type: "creature", prompt: "", profile: "meadowbots-flat", seed: "" as string | number, height_m: "" as string | number, count: 4, rig: false, batch: "",
-  kind: "sprite", transparent: true, seamless: false });
+  kind: "sprite", transparent: true, seamless: false, aspect: "16:9", duration_s: 5, init_image: "", fast: true });
 watch(() => form.kind, (k) => { form.transparent = k === "sprite"; form.seamless = k !== "sprite"; });
 const submitting = ref(false);
 async function submit() {
@@ -41,7 +41,8 @@ async function submit() {
   try {
     const job = await api.create({ type: form.type, prompt: form.prompt.trim(), profile: form.profile, count: Number(form.count) || 4,
       seed: form.seed === "" ? undefined : Number(form.seed), height_m: form.height_m === "" ? undefined : Number(form.height_m), rig: form.rig,
-      batch: form.batch.trim() || undefined, image: form.type === "image" ? { kind: form.kind, transparent: form.transparent, seamless: form.seamless } : undefined } as any);
+      batch: form.batch.trim() || undefined, image: form.type === "image" ? { kind: form.kind, transparent: form.transparent, seamless: form.seamless } : undefined,
+      video: form.type === "video" ? { aspect: form.aspect, duration_s: Number(form.duration_s) || 5, init_image: form.init_image.trim() || undefined, fast: form.fast } : undefined } as any);
     dialog.value = false; form.prompt = "";
     router.push(`/jobs/${job.id}`);
   } catch (e: any) { error.value = e?.data?.error ?? String(e); } finally { submitting.value = false; }
@@ -99,7 +100,15 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
     <v-dialog v-model="dialog" max-width="560" :fullscreen="$vuetify.display.xs">
       <v-card title="New job">
         <v-card-text>
-          <v-select v-model="form.type" :items="['creature', 'prop', 'plant', 'image']" label="Type" density="comfortable" />
+          <v-select v-model="form.type" :items="['creature', 'prop', 'plant', 'image', 'video']" label="Type" density="comfortable" />
+          <template v-if="form.type === 'video'">
+            <div class="d-flex flex-wrap ga-3 align-center mb-2">
+              <v-btn-toggle v-model="form.aspect" mandatory density="comfortable" variant="outlined" divided><v-btn value="16:9">16:9</v-btn><v-btn value="9:16">9:16</v-btn></v-btn-toggle>
+              <v-text-field v-model="form.duration_s" label="Seconds" type="number" min="1" max="10" density="compact" hide-details style="max-width: 110px" />
+              <v-switch v-model="form.fast" label="fast (4-step)" color="primary" density="compact" hide-details />
+            </div>
+            <v-text-field v-model="form.init_image" label="Init image (optional): job id, or job id/out/thumb.png" density="comfortable" hint="image-to-video from an approved asset's thumbnail" persistent-hint class="mb-2" />
+          </template>
           <v-textarea v-model="form.prompt" label="Prompt" rows="3" auto-grow placeholder="a round friendly garden robot with big eyes" autofocus />
           <template v-if="form.type === 'image'">
             <v-btn-toggle v-model="form.kind" mandatory density="comfortable" variant="outlined" divided class="mb-3">
@@ -113,7 +122,7 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
             <v-col cols="4"><v-text-field v-model="form.height_m" label="Height (m)" type="number" step="0.05" density="comfortable" hint="blank = profile" persistent-hint /></v-col>
             <v-col cols="4"><v-text-field v-model="form.count" label="Candidates" type="number" min="1" max="8" density="comfortable" /></v-col>
           </v-row>
-          <v-switch v-if="form.type !== 'image'" v-model="form.rig" label="Auto-rig (creatures only, adds ~30 s)" color="primary" :disabled="form.type !== 'creature'" hide-details />
+          <v-switch v-if="form.type !== 'image' && form.type !== 'video'" v-model="form.rig" label="Auto-rig (creatures only, adds ~30 s)" color="primary" :disabled="form.type !== 'creature'" hide-details />
           <v-text-field v-model="form.batch" label="Batch label (optional)" density="comfortable" hint="jobs with the same label show as a set" persistent-hint class="mt-2" />
         </v-card-text>
         <v-card-actions>

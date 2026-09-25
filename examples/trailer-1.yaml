@@ -1,0 +1,10 @@
+# forge job trailer examples/trailer-1.yaml  -- the Phase 6 acceptance trailer (job ids on the Forge VM as of 2026-09-25)
+profile: meadowbots-flat
+title: Meadowbots
+subtitle: a garden of little robots
+xfade_s: 0.5
+card_s: 2
+prompts:
+  - e45105f1-2c69-4a29-a536-cb205c65ab9f
+  - ade82872-aa5d-4d31-8296-a17f0f91b4be
+  - 21bfdce9-d1d8-4330-a2a4-59cbda723f3d

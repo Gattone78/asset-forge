@@ -131,3 +131,11 @@ sr0     1024M rom
 - **Batches** are a `batch` column in `/srv/forge/db/forge.sqlite` (added in place on first start after the upgrade); `GET /batches` lists them. `examples/plants.yaml` is the reference batch file.
 - **Per-job wall time varies with the mesh**: plants ranged from 53 s (sunflower) to 261 s (berry bush: 3D stage 166 s, post 88 s) on the same settings, so a 10-job batch is 15–30 min, not a fixed 25.
 - **Deploy rule still applies**: `forge-api` restarts fail the running job and do not resume it; with a batch queued, deploy between batches or accept re-queuing the failed job by hand.
+
+## Phase 6 additions (2026-09-25)
+
+- **Wan 2.2 14B on disk** (68 GB, `/srv/forge/models/download-wan22.sh`, Comfy-Org repackage, no token): `diffusion_models/wan2.2_{t2v,i2v}_{high,low}_noise_14B_fp8_scaled.safetensors` (4 × 14.3 GB), `text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors` (6.7 GB), `vae/wan_2.1_vae.safetensors`, `loras/wan2.2_{t2v,i2v}_lightx2v_4steps_lora_*_{high,low}_noise.safetensors` (4 × 1.2 GB). All ComfyUI-core nodes; no custom node added to the comfyui image.
+- **svc-post image rebuilt** (`forge/svc-post:0.1.0`, +ffmpeg 5.1.9 with libx264/libvpx-vp9/drawtext/xfade, +fonts-dejavu-core) — `deploy/build.sh svc-post`, tmux `forge`.
+- **Video jobs** keep the ComfyUI clip in `raw/clip-comfyui.mp4` and write `out/<name>.mp4`, `.webm`, `-poster.png`, `thumb.png`; trailers are CPU-only (`svc-post --mode trailer`) and never start comfyui.
+- **Measured VRAM / time:** Wan 2.2 14B fp8 pair peaks at **39.4 GB** during sampling and stays **34.9 GB resident** while loaded; T2V/I2V 5 s @ 832×480 in 28–40 s warm, 42 s cold. `FORGE_MIN_FREE_VRAM_GB=80` still fits (one model family at a time).
+- **Disk after Phase 6:** `/srv/forge` 191 GB used / 202 GB free (models 114 GB); root disk 101 GB free with comfyui stopped.

@@ -20,6 +20,16 @@ mesh:
   forward_yaw_deg: 180    # TRELLIS.2 output faces +Z (glTF convention); normalize turns it to face -Z (req §8)
   compression: meshopt    # or: draco
   resolution: 1024        # TRELLIS.2 upsample stage target resolution
+video:
+  model: wan2.2-14b       # Wan 2.2 T2V/I2V A14B fp8 (ComfyUI core); see docs/phase-6.md for alternatives
+  fps: 16                 # Wan 2.2 14B is a 16 fps model; 5 s = 81 frames
+  duration_s: 5
+  width_16x9: 832         # 480p; 1280x720 also works (about 3x slower)
+  height_16x9: 480
+  width_9x16: 480
+  height_9x16: 832
+  fast: true              # lightx2v 4-step LoRAs (cfg 1); false = 20 steps, cfg 3.5
+  style_prompt: "cute rounded 3D toy look, soft pastel colors, simple shapes, clean, bright even lighting, smooth gentle motion"
 rig:
   default: false          # jobs opt in with --rig (creatures only; props/plants get named pivots)
   template: articulationxl # UniRig skeleton template: articulationxl (any creature) | mixamo (humanoid)

@@ -1,0 +1,12 @@
+# forge job trailer examples/trailer.yaml
+# Stitches finished video jobs (by id) into one MP4: title card, then the clips with crossfades. CPU only, no GPU.
+# The `prompts:` list holds video job ids (same minimal YAML reader as batch files).
+profile: meadowbots-flat
+title: Meadowbots
+subtitle: a garden of little robots
+xfade_s: 0.5
+card_s: 2
+prompts:
+  - <video job id 1>
+  - <video job id 2>
+  - <video job id 3>
