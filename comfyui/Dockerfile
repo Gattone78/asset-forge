@@ -70,6 +70,12 @@ RUN mkdir -p /opt/ComfyUI/models /opt/ComfyUI/output /opt/ComfyUI/input /opt/Com
 USER comfy
 WORKDIR /opt/ComfyUI
 
+# comfy-env drives the UniRig isolated env with the `pixi` binary, which its install.py downloads into ~/.pixi (container-local).
+# forge-api recreates the container on every start since Phase 7, so pixi must live in the image, not in a container's writable layer.
+RUN mkdir -p /home/comfy/.pixi/bin && \
+    curl -fsSL -o /home/comfy/.pixi/bin/pixi https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-unknown-linux-musl && \
+    chmod +x /home/comfy/.pixi/bin/pixi && /home/comfy/.pixi/bin/pixi --version | tee -a /opt/ComfyUI/.forge-versions
+
 # HF cache lives on the models bind mount (/srv/forge/models/hf on the host); comfy-env root likewise.
 ENV HF_HOME=/opt/ComfyUI/models/hf \
     HF_HUB_DISABLE_TELEMETRY=1 \

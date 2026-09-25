@@ -779,7 +779,10 @@ async function stagePost(id: string, req: Job["request"], profile: Profile, refs
     job_id: id, game: profile.game, profile: profile.name, prompt: req.prompt, negative_prompt: profile.negative_prompt,
     request: req, refs: { picked: basename(refs.front), views: refs.side ? "multi" : "front" },
     stages: [
-      { stage: "image", model: "black-forest-labs/FLUX.1-schnell", source: "Comfy-Org/flux1-schnell (bf16)", seed: req.seed, steps: profile.image.steps, count: req.count, license: "Apache-2.0" },
+      // Phase 8 `model` jobs start from uploaded photos (optionally restyled by Qwen-Image-Edit), not FLUX candidates.
+      req.type === "model"
+        ? { stage: "photo", uploads: req.model!.photos, style: req.model!.style, restyle: styleOf(profile, req.model!.style).restyle ? { model: "Qwen/Qwen-Image-Edit-2511", source: "Comfy-Org/Qwen-Image-Edit_ComfyUI fp8mixed (ComfyUI core)", seed: req.seed, steps: 40, cfg: 3.0, license: "Apache-2.0" } : null, cutout: "BiRefNet (ComfyUI core)", picked: basename(refs.front) }
+        : { stage: "image", model: "black-forest-labs/FLUX.1-schnell", source: "Comfy-Org/flux1-schnell (bf16)", seed: req.seed, steps: profile.image.steps, count: req.count, license: "Apache-2.0" },
       { stage: "3d", model: "microsoft/TRELLIS.2-4B", source: "Comfy-Org/TRELLIS.2 trellis_2_bf16 via ComfyUI core", seed: req.seed + 1, resolution: profile.mesh.resolution ?? 1024, license: "MIT" },
     ],
   };

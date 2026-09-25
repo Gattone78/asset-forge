@@ -401,7 +401,7 @@ function readProfile(p) {
   // Tiny YAML subset: `key: value`, `section:` + two-space-indented `key: value`, `[a, b]` lists, quoted strings.
   const out = {}; let section = null;
   for (const raw of readFileSync(p, "utf8").split("\n")) {
-    const line = raw.replace(/#.*$/, "").trimEnd();
+    const line = raw.replace(/\r$/, "").replace(/#.*$/, "").trimEnd();   // CRLF-safe: a trailing \r would keep the inline comment (and turn numbers into NaN)
     if (!line.trim()) continue;
     const m = /^(\s*)([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
     if (!m) continue;
