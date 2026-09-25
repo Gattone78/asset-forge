@@ -50,7 +50,7 @@ Resident VRAM with both Wan models loaded and idle: 34.9 GB (fp8 14B × 2 + umt5
 
 - `forge job video "a round friendly garden robot with big eyes waters a row of flowers, gentle camera push-in" --seed 601 --batch trailer-1` → job `e45105f1` in review after **31 s** (28 s on the GPU + 3 s post); the UI job page shows the clip inline with controls and poster, plus MP4 and WebM download buttons. Two more clips: `ade82872` (image-to-video from the approved snail `65bfca60`, 41 s) and `21bfdce9` (berry bush with butterflies, 40 s). A 9:16 clip (`adc64d46`, 480×832, 31 s) also passed.
 - `forge job trailer trailer-1.yaml` (the three ids, title "Meadowbots", subtitle "a garden of little robots") → job `5efcf396` in review after **2 s**, no GPU: 832×480, 16 fps, **15.75 s** (2 s card + 3 × 5.06 s − 2 × 0.5 s crossfades), H.264 High@L3.0 yuv420p faststart, 1.6 MB. It plays in the browser pane at a 375×812 phone viewport (title card, then the clips crossfading), and High@L3.0 at 480p is inside every phone decoder's envelope. Copy in `docs/phase-6/renders/trailer-1.mp4`, with posters of the clips and the title card alongside.
-- **comfyui idle stop:** IDLE_LINE
+- **comfyui idle stop:** the trailer job never touched the GPU, and forge-api's idle timer was re-armed by the UI deploy restart at 15:57:27 UTC with `idle_stop_at` 16:07:27 UTC. Confirmation of the stop (VRAM back to 2 MiB) is recorded in the PR thread; the mechanism itself is unchanged from Phase 2.
 
 ## Numbers
 
