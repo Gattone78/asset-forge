@@ -91,7 +91,7 @@ switch (cmd) {
         rig: sub === "model" ? !flags["no-rig"] : false, height_m: flags.height ? Number(flags.height) : undefined };
       if (sub === "promo") { if (!flags.photo) die("--photo <upload id> required"); body.promo = { photo: String(flags.photo), style, duration_s: flags.duration ? Number(flags.duration) : undefined, aspect: flags.aspect,
         script: flags.script, narration_at_s: flags["narration-at"] ? Number(flags["narration-at"]) : undefined, music: !flags["no-music"], music_prompt: flags["music-prompt"], foley: !flags["no-foley"], title: flags.title }; }
-      else { if (!flags.photos) die("--photos <upload id>[,<id>…] required"); body.model = { photos: String(flags.photos).split(",").map((s) => s.trim()).filter(Boolean), style }; }
+      else { if (!flags.photos) die("--photos <upload id>[,<id>…] required"); body.model = { photos: String(flags.photos).split(",").map((s) => s.trim()).filter(Boolean), style, humanoid: !!flags.humanoid }; }   // --humanoid: person -> mixamo skeleton
       const j = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
       console.log(j.id); break;
     }

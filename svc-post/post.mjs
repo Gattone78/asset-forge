@@ -128,6 +128,7 @@ if (args.mode === "trailer") {
   const outDir = resolve(req("out-dir")); const name = req("name"); mkdirSync(outDir, { recursive: true });
   const xf = num(args.xfade, 0.5), card = num(args.card, 2.0), title = args.title ?? "", subtitle = args.subtitle ?? "";
   const music = args.music ? resolve(args.music) : null, musicDb = num(args["music-db"], -14);
+  const tailHold = num(args["tail-hold"], 0);   // seconds to freeze the last clip's final frame (lets a narration finish)
   const narr = args.narration ? String(args.narration).split(",").map((s) => { const [f, at] = s.split("@"); return { file: resolve(f.trim()), at: Number(at ?? 0) }; }) : [];
   const hasAudio = (f) => { try { return JSON.parse(run("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "json", f])).streams.length > 0; } catch { return false; } };
   const first = JSON.parse(run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate", "-of", "json", clips[0]])).streams[0];
@@ -143,7 +144,11 @@ if (args.mode === "trailer") {
   let fc = !hasCard ? "" : title ? `[0:v]drawtext=fontfile=${font}:text='${esc(title)}':fontcolor=white:fontsize=${Math.round(H / 8)}:x=(w-text_w)/2:y=(h-text_h)/2-${Math.round(H / 20)}` +
     (subtitle ? `,drawtext=fontfile=${font}:text='${esc(subtitle)}':fontcolor=white:fontsize=${Math.round(H / 20)}:x=(w-text_w)/2:y=(h/2)+${Math.round(H / 12)}` : "") + `,format=yuv420p[v0];` : `[0:v]format=yuv420p[v0];`;
   const segs = hasCard ? ["[v0]"] : []; const segDur = hasCard ? [card] : []; const segClip = hasCard ? [null] : [];
-  clips.forEach((_, i) => { const k = segs.length; fc += `[${k}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${fps},format=yuv420p[v${k}];`; segs.push(`[v${k}]`); segDur.push(durs[i]); segClip.push(i); });
+  clips.forEach((_, i) => {
+    const k = segs.length; const last = i === clips.length - 1; const hold = last && tailHold > 0 ? `,tpad=stop_mode=clone:stop_duration=${tailHold.toFixed(3)}` : "";
+    fc += `[${k}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${fps}${hold},format=yuv420p[v${k}];`;
+    segs.push(`[v${k}]`); segDur.push(durs[i] + (last ? tailHold : 0)); segClip.push(i);
+  });
   // Chain xfade: offset = accumulated duration - xf each time.
   let acc = segDur[0]; let prev = segs[0];
   if (segs.length === 1) fc += `${segs[0]}null[vout];`;

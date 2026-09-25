@@ -23,7 +23,7 @@ export interface JobRequest {
   audio?: { duration_s?: number; count?: number; loop?: boolean; bpm?: number; key?: string; voice?: string; speed?: number; clip?: string; sample_rate?: number; channels?: "mono" | "stereo" };
   /** Phase 8: photo-driven jobs. `photo`/`photos` are upload ids ("upload:<id>" or bare id); `style` is a key of the profile's `styles:` block. */
   promo?: { photo: string; style: string; duration_s?: number; aspect?: "16:9" | "9:16"; script?: string; narration_at_s?: number; music?: boolean; music_prompt?: string; foley?: boolean; title?: string };
-  model?: { photos: string[]; style: string };
+  model?: { photos: string[]; style: string; humanoid?: boolean };
 }
 export interface Job {
   id: string;

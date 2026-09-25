@@ -391,10 +391,16 @@ async function stagePromo(id: string, req: Job["request"], profile: Profile, nam
     music = join(mdir, r.files.find((f) => f.endsWith(".wav"))!);
     stages.push(...r.stages);
   }
-  // 6. mix (svc-post trailer mode: optional title card, the clip with its foley, music ducked under the narration)
+  // 6. mix (svc-post trailer mode: optional title card, the clip with its foley, music ducked under the narration).
+  //    If the narration runs past the clip, the last frame is held so the sentence finishes (tail hold).
   set("mix", 0.9);
+  const narrAt = (p.narration_at_s ?? 1.0) + (p.title ? 2 : 0);
+  const narrDur = narration ? Number(stages.find((s) => s.stage === "speech")?.duration_s ?? 0) : 0;
+  const total = (p.title ? 2 - 0.5 : 0) + clipDur;
+  const tailHold = narration ? Math.max(0, narrAt + narrDur + 0.5 - total) : 0;
+  if (tailHold > 0) log(`mix: holding the last frame ${tailHold.toFixed(1)}s so the narration finishes`);
   const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
-    "--mode", "trailer", "--clips", clipForMix, "--out-dir", out, "--name", name, "--card", p.title ? "2" : "0", "--xfade", "0.5",
+    "--mode", "trailer", "--clips", clipForMix, "--out-dir", out, "--name", name, "--card", p.title ? "2" : "0", "--xfade", "0.5", ...(tailHold > 0 ? ["--tail-hold", tailHold.toFixed(2)] : []),
     ...(p.title ? ["--title", p.title] : []), ...(music ? ["--music", music, "--music-db", String(pa.music_db ?? -14)] : []),
     ...(narration ? ["--narration", `${narration}@${(p.narration_at_s ?? 1.0) + (p.title ? 2 : 0)}`] : [])];
   const t1 = Date.now();
@@ -503,8 +509,8 @@ const jobOut = (jid: string, pred: (f: string) => boolean): string => {
 };
 
 /** Audio stage (Phase 7): sfx = Stable Audio 3 Small-SFX, music = ACE-Step 1.5 turbo, foley = MMAudio over a finished clip; then svc-post audio mode. */
-async function stageAudio(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void, onP: (p: number) => void): Promise<{ files: string[]; audio: any }> {
-  const dir = jobDir(id);
+async function stageAudio(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void, onP: (p: number) => void, outDir?: string): Promise<{ files: string[]; audio: any; stages: any[] }> {
+  const dir = jobDir(id); const out = outDir ?? join(dir, "out"); mkdirSync(out, { recursive: true });
   const a = req.audio ?? {};
   const pa = ((profile as any).audio ?? {}) as Record<string, any>;
   const kind = req.type as "sfx" | "music" | "foley";
@@ -737,7 +743,8 @@ async function stageRig(id: string, req: Job["request"], profile: Profile, name:
   await comfy.ensureUp(log);
   copyFileSync(textured, join(config.comfyInput, comfy.RIG_INPUT));
   const wf = loadWorkflow("rig.json");
-  const template = (profile.rig as any)?.template ?? "articulationxl";
+  // Phase 8: a photo of a person gets the humanoid (mixamo) skeleton; creatures keep the profile template.
+  const template = req.model?.humanoid ? "mixamo" : (profile.rig as any)?.template ?? "articulationxl";
   setInput(wf, "Rig input mesh", "file_path", comfy.RIG_INPUT);
   setInput(wf, "Auto rig", "skeleton_template", template);
   setInput(wf, "Auto rig", "fbx_name", `rig-${id.slice(0, 8)}`);

@@ -38,7 +38,7 @@ const isAudio = computed(() => ["sfx", "music", "speech", "foley"].includes(form
 // Phase 8: photo-driven jobs pick from the uploads list (Uploads page adds photos).
 const isPhoto = computed(() => form.type === "promo" || form.type === "model");
 const uploads = ref<Upload[]>([]);
-const photoForm = reactive({ photo: "" as string, photos: [] as string[], style: "pixar", script: "", narration_at: 1, music: true, foley: true, music_prompt: "", title: "", duration_s: 5, aspect: "16:9" });
+const photoForm = reactive({ photo: "" as string, photos: [] as string[], style: "pixar", script: "", narration_at: 1, music: true, foley: true, music_prompt: "", title: "", duration_s: 5, aspect: "16:9", humanoid: false });
 const styles = ["realistic", "pixar", "2d", "toy"];
 watch(dialog, async (open) => { if (open) { try { uploads.value = await api.uploads(); } catch {} } });
 async function addPhoto(files: File | File[] | null) {
@@ -54,7 +54,7 @@ async function submit() {
     const job = await api.create({ type: form.type, prompt: form.prompt.trim(), profile: form.profile, count: Number(form.count) || 4,
       promo: form.type === "promo" ? { photo: photoForm.photo, style: photoForm.style, duration_s: Number(photoForm.duration_s) || 5, aspect: photoForm.aspect, script: photoForm.script.trim() || undefined,
         narration_at_s: Number(photoForm.narration_at) || 1, music: photoForm.music, foley: photoForm.foley, music_prompt: photoForm.music_prompt.trim() || undefined, title: photoForm.title.trim() || undefined } : undefined,
-      model: form.type === "model" ? { photos: photoForm.photos, style: photoForm.style } : undefined,
+      model: form.type === "model" ? { photos: photoForm.photos, style: photoForm.style, humanoid: photoForm.humanoid } : undefined,
       audio: isAudio.value ? { duration_s: form.audio_duration === "" ? undefined : Number(form.audio_duration), count: Number(form.audio_count) || 4, loop: form.loop,
         bpm: form.bpm === "" ? undefined : Number(form.bpm), key: form.key.trim() || undefined, voice: form.voice.trim() || undefined, speed: Number(form.speed) || 1, clip: form.clip.trim() || undefined } : undefined,
       seed: form.seed === "" ? undefined : Number(form.seed), height_m: form.height_m === "" ? undefined : Number(form.height_m), rig: form.rig,
@@ -140,6 +140,7 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
               </div>
               <v-text-field v-model="photoForm.title" label="Title card (optional)" density="compact" hide-details class="mb-2" />
             </template>
+            <v-switch v-if="form.type === 'model'" v-model="photoForm.humanoid" label="the subject is a person (humanoid skeleton)" color="primary" density="compact" hide-details class="mb-2" />
           </template>
           <template v-if="form.type === 'sfx'">
             <div class="d-flex flex-wrap ga-3 align-center mb-2">

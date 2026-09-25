@@ -12,7 +12,14 @@ Everything else in this phase reuses Phase 2–7 stages: BiRefNet cut-out, TRELL
 
 ## Blackwell gate (`scripts/phase8-gate.sh`)
 
-GATE_RESULTS
+**Passed** first time (2026-09-25 17:22–17:25 UTC; `docs/phase-8/gate.log`). Input: the Phase 6 robot poster frame (`gate-input.png`, a photoreal-looking render we own — no photo of a person was fetched for the gate).
+
+| Run | Result | Wall | Peak VRAM |
+|---|---|---|---|
+| `pixar` instruction, seed 1, cold (models load from disk) | 1.2 MB PNG, **SSIM vs input 0.31** (changed, composition kept) — `gate-restyle-pixar.png` | **82.1 s** | **29,500 MiB** |
+| `2d` instruction, seed 2, warm | `gate-restyle-2d.png` | **68.1 s** | 30,044 MiB |
+
+40 steps of the 20B model at cfg 3 is the slow part (≈1.7 s per step). The Comfy-Org template's optional Lightning 4-step LoRA would bring a restyle down to ~10 s; it was not downloaded for the gate, and is the first thing to add if restyle time matters.
 
 ## What was built
 

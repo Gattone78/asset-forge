@@ -34,9 +34,11 @@ const isPromo = computed(() => job.value?.request.type === "promo");
 const styledStill = computed(() => outFiles.value.find((f) => f.path === "out/styled.png")?.path);
 const isAudio = computed(() => ["sfx", "music", "speech", "foley"].includes(job.value?.request.type ?? ""));
 const audioEntries = computed(() => (sidecar.value?.audios ?? (sidecar.value?.audio?.kind === "speech" ? [{ index: 1, ...sidecar.value.audio, ...sidecar.value.files }] : [])) as any[]);
-const videoMp4 = computed(() => outFiles.value.find((f) => f.path.endsWith(".mp4"))?.path);
-const videoWebm = computed(() => outFiles.value.find((f) => f.path.endsWith(".webm"))?.path);
-const videoPoster = computed(() => outFiles.value.find((f) => f.path.endsWith("-poster.png"))?.path);
+// The final MP4 is the one whose name is not an intermediate (promo jobs also keep "<name>-clip.mp4" and its poster).
+const isFinal = (p: string) => !/-clip\.(mp4|webm)$|-clip-poster\.png$/.test(p);
+const videoMp4 = computed(() => outFiles.value.find((f) => f.path.endsWith(".mp4") && isFinal(f.path))?.path ?? outFiles.value.find((f) => f.path.endsWith(".mp4"))?.path);
+const videoWebm = computed(() => job.value?.request.type === "promo" ? undefined : outFiles.value.find((f) => f.path.endsWith(".webm") && isFinal(f.path))?.path);
+const videoPoster = computed(() => outFiles.value.find((f) => f.path.endsWith("-poster.png") && isFinal(f.path))?.path);
 const imageEntries = computed(() => (sidecar.value?.images ?? []) as any[]);
 
 async function refresh() {

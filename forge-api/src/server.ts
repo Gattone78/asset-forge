@@ -76,9 +76,9 @@ app.post("/jobs", async (req, reply) => {
   if (type === "promo") jr.promo = { photo: String(b.promo.photo).replace(/^upload:/, ""), style: String(b.promo.style), duration_s: b.promo.duration_s ? Math.min(10, Math.max(1, Number(b.promo.duration_s))) : undefined,
     aspect: b.promo.aspect === "9:16" ? "9:16" : "16:9", script: b.promo.script ? String(b.promo.script) : undefined, narration_at_s: b.promo.narration_at_s !== undefined ? Number(b.promo.narration_at_s) : undefined,
     music: b.promo.music !== false, music_prompt: b.promo.music_prompt ? String(b.promo.music_prompt) : undefined, foley: b.promo.foley !== false, title: b.promo.title ? String(b.promo.title) : undefined };
-  if (type === "model") jr.model = { photos: (b.model.photos as string[]).map((p) => String(p).replace(/^upload:/, "")), style: String(b.model.style) };
+  if (type === "model") jr.model = { photos: (b.model.photos as string[]).map((p) => String(p).replace(/^upload:/, "")), style: String(b.model.style), humanoid: !!b.model.humanoid };
   if (type === "trailer") jr.prompt = jr.prompt || `trailer: ${jr.trailer!.title ?? jr.trailer!.clips.length + " clips"}`;
-  if (jr.rig && type !== "creature") return reply.code(400).send({ error: "rigging applies to creatures only (props and plants get named pivots, req §1)" });
+  if (jr.rig && type !== "creature" && type !== "model") return reply.code(400).send({ error: "rigging applies to creatures and photo models only (props and plants get named pivots, req §1)" });
   if (jr.views === "multi") return reply.code(501).send({ error: "views=multi is not effective: ComfyUI core's Trellis2Conditioning treats an image batch as separate objects, so the result equals the front-only run (Phase 2 bake-off, docs/phase-2.md). Multi-view needs the Pixal3D multi-view model; not wired yet." });
   const job = insertJob(randomUUID(), jr);
   return reply.code(201).send(job);
