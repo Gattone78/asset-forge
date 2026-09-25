@@ -32,15 +32,32 @@ Everything else in this phase reuses Phase 2–7 stages: BiRefNet cut-out, TRELL
 
 ## Acceptance (§7 Phase 8)
 
-ACCEPTANCE_RESULTS
+Run with the gate frame uploaded through the CLI (`forge upload docs/phase-8/gate-input.png` → upload `2a51e4f2`); Phil then reviewed the promo page in the UI ("looks good to me"). A photo of a person was deliberately not part of my run — that is Phil's own upload to make, with the `humanoid` switch for the rig.
+
+- **promo:** `forge job promo --photo 2a51e4f2 "a friendly garden robot waters flowers and looks up at the camera, gentle camera push-in" --style pixar --script "Meet Sprout, the little robot who keeps the meadow growing." --title "Meadowbots" --seed 801` → job `acb0f4c5` in review after **165 s**: restyle 86 s → clip 42 s → foley 15.5 s → narration 3.9 s (CPU) → music 8 s → mix 1.4 s. Output 6.6 s (2 s title card + 5.06 s clip), H.264 + AAC with foley, narration at 3 s and music ducked under it; `out/styled.png` next to the uploaded photo on the job page; every intermediate kept under `out/`. Copies: `docs/phase-8/promo-pixar-with-sound.mp4`, `promo-styled-still.png`, `promo-clip-poster.png`. The first run of this job failed on a variable I had left undefined in the music stage; fixed and rerun. The narration (5.7 s) ran past the 5 s clip, so promo now holds the last frame until the sentence finishes (`--tail-hold` in the mixer) — in effect from the next run.
+- **model:** `forge job model --photos 2a51e4f2 "a friendly garden robot" --style toy --seed 802` → MODEL_RESULT
+- **realistic:** the `realistic` style skips the restyle stage (logged as "restyle: skipped") and feeds the photo straight to Wan I2V / the cut-out.
+- **comfyui idle stop:** IDLE_LINE
+- **Uploads survive job deletion** by construction (separate directory, delete refused while referenced); they are in the backup set with `jobs/` and `db/`.
 
 ## Numbers
 
-NUMBERS
+| Item | Value |
+|---|---|
+| Qwen-Image-Edit 2511 restyle (40 steps, 832×480 in) | 82 s cold, 68–86 s warm; peak 29.5–30 GB VRAM |
+| promo job end to end (pixar, script, title, foley, music) | 165 s; output 6.6 s MP4 with AAC, 0.66 MB |
+| model job end to end (toy, rigged, one photo) | MODEL_NUMBERS |
+| Models added | 30.2 GB; `/srv/forge/models` ≈ 164 GB, data disk 69 % |
+| Upload | 832×480 PNG stored as 0.88 MB; upload round-trip < 1 s |
 
 ## Things that turned out wrong in practice
 
-NOTES
+1. **The restyle reinterprets, it does not only re-shade.** With "keep the same subject, pose and framing" in the instruction, the `pixar` pass on the robot frame produced a doll-like character with a face where the robot's visor was, while the `2d` pass stayed faithful (`docs/phase-8/gate-restyle-*.png`). Wan I2V then followed the still. Expect the same on a person: the likeness is approximate, and the instruction wording per style is the knob to tune.
+2. **Restyle time dominates a promo** (≈ 85 s of 165 s). The Lightning 4-step LoRA for 2511 is the fix if it matters.
+3. **A narration longer than the clip** was cut off in the first acceptance run; the mixer now holds the last frame until the sentence ends (`--tail-hold`). Longer scripts should still get a longer `duration_s` (up to 10 s) or a second clip.
+4. **A photo of a whole scene becomes a whole scene in 3D**: the `model` acceptance photo (a garden with the robot in it) gave TRELLIS.2 a 5.2 M-triangle scene to decimate, MODEL_NOTE. Photos for `model` should be of the subject alone, or the cut-out step needs a "main subject only" pass.
+5. **The job page picked the wrong MP4** for promo jobs at first (the silent intermediate clip sorts before the final file); it now prefers the final mix.
+6. Uploads use the raw request body instead of multipart, so forge-api gained no dependency; the trade-off is one request per file.
 
 ## Next
 Nothing scheduled. "Later" in `docs/requirements.md`: multi-view fusion, voice cloning, an LLM for scripts, MCP, runtime generation, Kubernetes, multi-GPU.
