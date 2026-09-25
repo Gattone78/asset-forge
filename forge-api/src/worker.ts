@@ -72,8 +72,28 @@ async function runJob(job0: Job): Promise<void> {
       return;
     }
 
+    if (req.type === "speech") {
+      // ---- speech (Phase 7): Kokoro in svc-audio, CPU only, never starts comfyui ----
+      set("speech", 0.2);
+      const name = `${profile.game}-speech-${slug(req.prompt)}-${id.slice(0, 6)}`;
+      const res = await stageSpeech(id, req, profile, name, log);
+      updateJob(id, { status: "review", stage: "review", progress: 1, result: { name, files: res.files, audio: res.audio, seconds: (Date.now() - t0) / 1000 } });
+      log(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s -> ${name}`);
+      return;
+    }
+
     set("starting", 0);
     await comfy.ensureUp(log);
+
+    if (req.type === "sfx" || req.type === "music" || req.type === "foley") {
+      // ---- audio (Phase 7): Stable Audio 3 (sfx), ACE-Step 1.5 (music) or MMAudio (foley from a clip), then ffmpeg post ----
+      set(req.type, 0.1);
+      const name = `${profile.game}-${req.type}-${slug(req.prompt || "clip")}-${id.slice(0, 6)}`;
+      const res = await stageAudio(id, req, profile, name, log, (p) => set(req.type, 0.1 + 0.8 * p));
+      updateJob(id, { status: "review", stage: "review", progress: 1, result: { name, files: res.files, audio: res.audio, seconds: (Date.now() - t0) / 1000 } });
+      log(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s -> ${name}`);
+      return;
+    }
 
     if (req.type === "video") {
       // ---- video (Phase 6): Wan 2.2 text-to-video or image-to-video, then ffmpeg post ----
@@ -300,6 +320,94 @@ async function stageVideo(id: string, req: Job["request"], profile: Profile, nam
   return { files: readdirSync(join(dir, "out")), video: sc.video };
 }
 
+const jobOut = (jid: string, pred: (f: string) => boolean): string => {
+  const j = getJob(jid); if (!j) throw new Error("job not found: " + jid);
+  const out = join(jobDir(j.id), "out");
+  const f = existsSync(out) ? readdirSync(out).find(pred) : undefined;
+  if (!f) throw new Error("job has no matching output: " + jid);
+  return join(out, f);
+};
+
+/** Audio stage (Phase 7): sfx = Stable Audio 3 Small-SFX, music = ACE-Step 1.5 turbo, foley = MMAudio over a finished clip; then svc-post audio mode. */
+async function stageAudio(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void, onP: (p: number) => void): Promise<{ files: string[]; audio: any }> {
+  const dir = jobDir(id);
+  const a = req.audio ?? {};
+  const pa = ((profile as any).audio ?? {}) as Record<string, any>;
+  const kind = req.type as "sfx" | "music" | "foley";
+  let wf: Workflow; let duration: number; let stage: Record<string, any>; let clipRaw: string | null = null;
+  if (kind === "sfx") {
+    duration = a.duration_s ?? pa.sfx_duration_s ?? 4;
+    wf = loadWorkflow("text-to-sfx.json");
+    setInput(wf, "Prompt", "text", `${req.prompt}, ${pa.sfx_style ?? ""}`.replace(/, $/, ""));
+    setInput(wf, "Latent", "seconds", duration); setInput(wf, "Latent", "batch_size", a.count ?? 4);
+    setInput(wf, "Sampler", "seed", req.seed);
+    setInput(wf, "Save audio", "filename_prefix", `jobs/${id}/out/sfx`);
+    stage = { stage: "audio", kind, model: "stabilityai/stable-audio-3-small-sfx", source: "Comfy-Org/stable-audio-3 (ComfyUI core)", steps: 50, cfg: 7.0, sampler: "lcm/simple", license: "Stability AI Community License" };
+  } else if (kind === "music") {
+    duration = a.duration_s ?? pa.music_duration_s ?? 30;
+    wf = loadWorkflow("text-to-music.json");
+    setInput(wf, "Prompt", "tags", `${req.prompt}, ${pa.music_style ?? ""}`.replace(/, $/, ""));
+    setInput(wf, "Prompt", "lyrics", "[instrumental]");
+    setInput(wf, "Prompt", "bpm", a.bpm ?? pa.music_bpm ?? 120); setInput(wf, "Prompt", "keyscale", a.key ?? pa.music_key ?? "C major");
+    setInput(wf, "Prompt", "duration", duration); setInput(wf, "Prompt", "seed", req.seed);
+    setInput(wf, "Latent", "seconds", duration); setInput(wf, "Sampler", "seed", req.seed);
+    setInput(wf, "Save audio", "filename_prefix", `jobs/${id}/out/music`);
+    stage = { stage: "audio", kind, model: "ACE-Step/ACE-Step-v1.5 turbo", source: "Comfy-Org/ace_step_1.5_ComfyUI_files (ComfyUI core)", steps: 8, cfg: 1.0, shift: 3.0, bpm: a.bpm ?? pa.music_bpm ?? 120, key: a.key ?? pa.music_key ?? "C major", lyrics: "[instrumental]", loop: !!a.loop, license: "MIT" };
+  } else {
+    const clip = jobOut(a.clip!, (f) => f.endsWith(".mp4") && !f.includes("poster"));
+    const srcJob = getJob(a.clip!)!;
+    duration = a.duration_s ?? srcJob.result?.video?.duration_s ?? 5;
+    const inDir = join(config.comfyInput, "jobs", id); mkdirSync(inDir, { recursive: true });
+    copyFileSync(clip, join(inDir, "clip.mp4")); clipRaw = join(dir, "raw", "clip.mp4"); copyFileSync(clip, clipRaw);
+    wf = loadWorkflow("video-to-audio.json");
+    setInput(wf, "Load clip", "file", `jobs/${id}/clip.mp4`);
+    setInput(wf, "Sampler", "prompt", req.prompt ?? ""); setInput(wf, "Sampler", "duration", duration); setInput(wf, "Sampler", "seed", req.seed);
+    setInput(wf, "Save audio", "filename_prefix", `jobs/${id}/out/foley`);
+    stage = { stage: "audio", kind, model: "hkchengrex/MMAudio large_44k_v2", source: "Kijai/MMAudio_safetensors via ComfyUI-MMAudio (custom node, pinned)", steps: 25, cfg: 4.5, clip_job: a.clip, license: "MIT" };
+  }
+  const t0 = Date.now();
+  const r = await comfy.run(wf, (e) => { if (e.value !== undefined && e.max) onP(0.1 + 0.8 * e.value / e.max); });
+  log(`${kind}: ${duration}s seed ${req.seed}: ${r.seconds.toFixed(1)}s on the GPU`);
+  const srcOut = join(config.comfyOutput, "jobs", id, "out");
+  const produced = existsSync(srcOut) ? readdirSync(srcOut).filter((f) => /\.(flac|wav|mp3|opus)$/.test(f)).sort() : [];
+  if (!produced.length) throw new Error(`${kind} stage produced no audio file`);
+  const raws = produced.map((f, i) => { const p = join(dir, "raw", `${kind}-comfyui-${i + 1}${f.slice(f.lastIndexOf("."))}`); renameSync(join(srcOut, f), p); return p; });
+  rmSync(join(config.comfyOutput, "jobs", id), { recursive: true, force: true });
+  rmSync(join(config.comfyInput, "jobs", id), { recursive: true, force: true });
+  const extra = { job_id: id, game: profile.game, profile: profile.name, profile_hash: profile._hash, prompt: req.prompt, request: req, batch: req.batch ?? null,
+    stages: [{ ...stage, seed: req.seed, duration_s: duration, count: raws.length, seconds: Number(r.seconds.toFixed(1)) }] };
+  writeFileSync(join(dir, "out", "sidecar-extra.json"), JSON.stringify(extra, null, 1));
+  const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
+    "--mode", "audio", "--in", raws.join(","), "--out-dir", join(dir, "out"), "--name", name, "--kind", kind,
+    "--sample-rate", String(a.sample_rate ?? pa.sample_rate ?? 44100), "--channels", a.channels ?? (kind === "sfx" ? pa.sfx_channels ?? "mono" : "stereo"),
+    ...(a.loop ? ["--loop"] : []), ...(clipRaw ? ["--clip", clipRaw] : []), "--sidecar-extra", join(dir, "out", "sidecar-extra.json")];
+  const t1 = Date.now();
+  await runContainer(args, join(dir, "log.txt"), "svc-post audio");
+  rmSync(join(dir, "out", "sidecar-extra.json"), { force: true });
+  const sc = JSON.parse(readFileSync(join(dir, "out", `${name}.sidecar.json`), "utf8"));
+  log(`${kind}: post done in ${((Date.now() - t1) / 1000).toFixed(1)}s, ${sc.audio.count} × ${sc.audio.duration_s}s non_silent=${sc.audio.non_silent}${sc.audios?.[0]?.loop_seam_db != null ? " loop seam " + sc.audios[0].loop_seam_db + " dB" : ""}`);
+  onP(1);
+  return { files: readdirSync(join(dir, "out")), audio: sc.audio };
+}
+
+/** Speech (Phase 7): Kokoro-82M in the svc-audio container. CPU only. */
+async function stageSpeech(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void): Promise<{ files: string[]; audio: any }> {
+  const dir = jobDir(id);
+  const a = req.audio ?? {}; const pa = ((profile as any).audio ?? {}) as Record<string, any>;
+  const voice = a.voice ?? pa.voice ?? "af_heart", speed = a.speed ?? pa.voice_speed ?? 1.0;
+  const extra = { job_id: id, game: profile.game, profile: profile.name, profile_hash: profile._hash, prompt: req.prompt, request: req, batch: req.batch ?? null,
+    stages: [{ stage: "speech", model: "hexgrad/Kokoro-82M", source: "kokoro 0.9.4 in svc-audio (CPU)", voice, speed, seed: null, license: "Apache-2.0" }] };
+  writeFileSync(join(dir, "out", "sidecar-extra.json"), JSON.stringify(extra, null, 1));
+  const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcAudioImage,
+    "--text", req.prompt, "--voice", voice, "--speed", String(speed), "--out-dir", join(dir, "out"), "--name", name, "--sidecar-extra", join(dir, "out", "sidecar-extra.json")];
+  const t0 = Date.now();
+  await runContainer(args, join(dir, "log.txt"), "svc-audio");
+  rmSync(join(dir, "out", "sidecar-extra.json"), { force: true });
+  const sc = JSON.parse(readFileSync(join(dir, "out", `${name}.sidecar.json`), "utf8"));
+  log(`speech: ${sc.audio.duration_s}s voice ${voice} in ${((Date.now() - t0) / 1000).toFixed(1)}s, non_silent=${sc.audio.non_silent}`);
+  return { files: readdirSync(join(dir, "out")), audio: sc.audio };
+}
+
 /** Trailer (Phase 6): concatenate finished video jobs' MP4s with crossfades behind a title card. CPU only. */
 async function stageTrailer(id: string, req: Job["request"], profile: Profile, name: string, log: (m: string) => void): Promise<string[]> {
   const dir = jobDir(id);
@@ -312,14 +420,20 @@ async function stageTrailer(id: string, req: Job["request"], profile: Profile, n
     if (!mp4) throw new Error("clip job has no mp4: " + cid);
     clips.push(join(out, mp4));
   }
+  // Phase 7: optional music (a finished music job's WAV) and narration (speech jobs at offsets)
+  const pa = ((profile as any).audio ?? {}) as Record<string, any>;
+  const music = t.music ? jobOut(t.music, (f) => f.endsWith(".wav")) : null;
+  const narration = (t.narration ?? []).map((n) => `${jobOut(n.speech, (f) => f.endsWith(".wav"))}@${n.at_s}`);
   const args = [...config.nerdctl.slice(1), "run", "--rm", "--user", "1000:1000", "-v", `${config.data}:${config.data}`, config.svcPostImage,
     "--mode", "trailer", "--clips", clips.join(","), "--out-dir", join(dir, "out"), "--name", name,
     ...(t.title ? ["--title", t.title] : []), ...(t.subtitle ? ["--subtitle", t.subtitle] : []),
-    ...(t.xfade_s ? ["--xfade", String(t.xfade_s)] : []), ...(t.card_s ? ["--card", String(t.card_s)] : [])];
+    ...(t.xfade_s ? ["--xfade", String(t.xfade_s)] : []), ...(t.card_s ? ["--card", String(t.card_s)] : []),
+    ...(music ? ["--music", music, "--music-db", String(t.music_db ?? pa.music_db ?? -14)] : []), ...(narration.length ? ["--narration", narration.join(",")] : [])];
   const t0 = Date.now();
   await runContainer(args, join(dir, "log.txt"), "svc-post trailer");
   const sc = JSON.parse(readFileSync(join(dir, "out", `${name}.sidecar.json`), "utf8"));
   sc.job_id = id; sc.game = profile.game; sc.profile = profile.name; sc.request = req; sc.trailer.clip_jobs = t.clips;
+  if (t.music) sc.trailer.music_job = t.music; if (t.narration?.length) sc.trailer.narration_jobs = t.narration;
   writeFileSync(join(dir, "out", `${name}.sidecar.json`), JSON.stringify(sc, null, 1));
   log(`trailer: ${t.clips.length} clips -> ${sc.trailer.duration_s}s in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   return readdirSync(join(dir, "out"));

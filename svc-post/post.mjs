@@ -14,7 +14,7 @@
 //   5. sidecar json
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,68 @@ const here = dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
 const t0 = Date.now();
 const log = (...m) => console.log(`[post ${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...m);
+
+// ---- audio mode (Phase 7): ComfyUI's FLAC/WAV -> peak-normalised WAV + OGG (+ MP3 for music) + waveform PNG + loudness + non-silence ----
+//   node post.mjs --mode audio --in a.flac[,b.flac,...] --out-dir out/ --name <name> --kind sfx|music|foley [--loop] [--channels mono|stereo]
+//        [--sample-rate 44100] [--sidecar-extra extra.json] [--clip clip.mp4]   (--clip: foley, mux the audio into a copy of the clip)
+//   Several inputs = variations: <name>-1.wav … ; exit 3 if every variation is silent (mean level below -50 dBFS).
+if (args.mode === "audio") {
+  const ins = String(req("in")).split(",").map((s) => resolve(s.trim())).filter(Boolean);
+  const outDir = resolve(req("out-dir")); const name = req("name"); const kind = args.kind ?? "sfx"; mkdirSync(outDir, { recursive: true });
+  const sr = int(args["sample-rate"], 44100); const ch = (args.channels ?? (kind === "sfx" ? "mono" : "stereo")) === "mono" ? 1 : 2;
+  const entries = [];
+  ins.forEach((inp, i) => {
+    const base = ins.length > 1 ? `${name}-${i + 1}` : name;
+    const wav = join(outDir, `${base}.wav`), ogg = join(outDir, `${base}.ogg`), mp3 = join(outDir, `${base}.mp3`), png = join(outDir, `${base}-waveform.png`);
+    const probe = JSON.parse(run("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate,channels,codec_name:format=duration", "-of", "json", inp]));
+    const srcDur = Number(probe.format.duration);
+    // Loop mode (music): crossfade the last `xf` seconds into the head so the file repeats without a click; the result is `xf` shorter.
+    let af = `aresample=${sr},aformat=channel_layouts=${ch === 1 ? "mono" : "stereo"}`;
+    let loopSeam = null;
+    if (args.loop && srcDur > 4) {
+      const xf = Math.min(2, srcDur / 8);
+      const looped = join(outDir, `${base}.loop.wav`);
+      run("ffmpeg", ["-y", "-v", "error", "-i", inp, "-filter_complex",
+        `[0:a]asplit=2[a][b];[a]atrim=0:${(srcDur - xf).toFixed(3)},asetpts=PTS-STARTPTS[head];[b]atrim=${(srcDur - xf).toFixed(3)},asetpts=PTS-STARTPTS[tail];` +
+        `[head]asplit=2[h1][h2];[h1]atrim=0:${xf.toFixed(3)},asetpts=PTS-STARTPTS[hstart];[h2]atrim=${xf.toFixed(3)},asetpts=PTS-STARTPTS[hrest];` +
+        `[tail][hstart]acrossfade=d=${xf.toFixed(3)}:c1=tri:c2=tri[seam];[seam][hrest]concat=n=2:v=0:a=1[out]`, "-map", "[out]", looped]);
+      // Seam check: level difference between the last and first 50 ms (0 = perfectly continuous).
+      const tailLvl = level(looped, `atrim=start=${(srcDur - xf - 0.05).toFixed(3)}`), headLvl = level(looped, "atrim=0:0.05");
+      loopSeam = Number(Math.abs(tailLvl - headLvl).toFixed(2));
+      inp = looped;
+    }
+    run("ffmpeg", ["-y", "-v", "error", "-i", inp, "-af", `${af},alimiter=limit=0.89:level=false`, "-c:a", "pcm_s16le", wav]);
+    if (inp.endsWith(".loop.wav")) rmSafe(inp);
+    const stats = run("ffmpeg", ["-v", "info", "-i", wav, "-af", "volumedetect,ebur128=peak=true", "-f", "null", "-"]);
+    const grab = (re) => { const m = re.exec(stats); return m ? Number(m[1]) : null; };
+    const meanDb = grab(/mean_volume:\s*(-?[\d.]+)/), peakDb = grab(/max_volume:\s*(-?[\d.]+)/), lufs = grab(/I:\s*(-?[\d.]+) LUFS/);
+    run("ffmpeg", ["-y", "-v", "error", "-i", wav, "-c:a", "libvorbis", "-q:a", "5", ogg]);
+    if (kind === "music") run("ffmpeg", ["-y", "-v", "error", "-i", wav, "-c:a", "libmp3lame", "-q:a", "2", mp3]);
+    run("ffmpeg", ["-y", "-v", "error", "-i", wav, "-filter_complex", "showwavespic=s=1024x256:colors=0x2e7d32", "-frames:v", "1", png]);
+    const dur = Number(JSON.parse(run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", wav])).format.duration);
+    const nonSilent = meanDb !== null && meanDb > -50 && dur >= 0.2;
+    entries.push({ index: i + 1, wav: basename(wav), ogg: basename(ogg), mp3: kind === "music" ? basename(mp3) : undefined, waveform: basename(png),
+      duration_s: Number(dur.toFixed(3)), sample_rate: sr, channels: ch, source_codec: probe.streams[0]?.codec_name, source_sample_rate: Number(probe.streams[0]?.sample_rate),
+      mean_dbfs: meanDb, peak_dbfs: peakDb, lufs, non_silent: nonSilent, loop: !!args.loop, loop_seam_db: loopSeam });
+  });
+  if (args.clip) {  // foley: copy of the clip with the new audio track (video stream untouched)
+    const clipOut = join(outDir, `${name}.mp4`);
+    run("ffmpeg", ["-y", "-v", "error", "-i", resolve(args.clip), "-i", join(outDir, entries[0].wav), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", clipOut]);
+    run("ffmpeg", ["-y", "-v", "error", "-ss", "1", "-i", clipOut, "-frames:v", "1", join(outDir, `${name}-poster.png`)]);
+    copyFileSync(join(outDir, `${name}-poster.png`), join(outDir, "thumb.png"));
+  } else copyFileSync(join(outDir, entries[0].waveform), join(outDir, "thumb.png"));
+  const extra = args["sidecar-extra"] ? JSON.parse(readFileSync(resolve(args["sidecar-extra"]), "utf8")) : {};
+  const anyGood = entries.some((e) => e.non_silent);
+  const sidecar = { forge_version: "0.1.0", created_at: new Date().toISOString(), ...extra,
+    audio: { kind, count: entries.length, sample_rate: sr, channels: ch, duration_s: entries[0].duration_s, non_silent: anyGood, lufs: entries[0].lufs, peak_dbfs: entries[0].peak_dbfs },
+    audios: entries, files: { wav: entries[0].wav, ogg: entries[0].ogg, mp3: entries[0].mp3, waveform: entries[0].waveform, thumb: "thumb.png", ...(args.clip ? { mp4: `${name}.mp4`, poster: `${name}-poster.png` } : {}) },
+    status: extra.status || "review" };
+  writeFileSync(join(outDir, `${name}.sidecar.json`), JSON.stringify(sidecar, null, 1));
+  log(`done: ${entries.length} × ${entries[0].duration_s}s ${kind} @${sr} Hz ${ch}ch, mean ${entries.map((e) => e.mean_dbfs).join("/")} dBFS, non_silent=${anyGood} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  process.exit(anyGood ? 0 : 3);
+}
+function level(file, pre) { const s = run("ffmpeg", ["-v", "info", "-i", file, "-af", `${pre},volumedetect`, "-f", "null", "-"]); const m = /mean_volume:\s*(-?[\d.]+)/.exec(s); return m ? Number(m[1]) : -99; }
+function rmSafe(p) { try { unlinkSync(p); } catch {} }
 
 // ---- video mode (Phase 6): ComfyUI's mp4 -> web-safe H.264 MP4 + WebM + poster frame + probe + non-blank check ----
 //   node post.mjs --mode video --in clip.mp4 --out-dir out/ --name <name> [--sidecar-extra extra.json]
@@ -57,10 +119,14 @@ if (args.mode === "video") {
 
 // ---- trailer mode (Phase 6, optional): title card + clips with crossfades -> one MP4 ----
 //   node post.mjs --mode trailer --clips a.mp4,b.mp4,c.mp4 --out-dir out/ --name <name> [--title "Meadowbots"] [--subtitle "…"] [--xfade 0.5] [--card 2]
+//        [--music music.wav] [--music-db -14] [--narration a.wav@1.5,b.wav@7]  (Phase 7: AAC track — clip audio if any, music ducked under narration)
 if (args.mode === "trailer") {
   const clips = String(req("clips")).split(",").map((c) => resolve(c.trim())).filter(Boolean);
   const outDir = resolve(req("out-dir")); const name = req("name"); mkdirSync(outDir, { recursive: true });
   const xf = num(args.xfade, 0.5), card = num(args.card, 2.0), title = args.title ?? "", subtitle = args.subtitle ?? "";
+  const music = args.music ? resolve(args.music) : null, musicDb = num(args["music-db"], -14);
+  const narr = args.narration ? String(args.narration).split(",").map((s) => { const [f, at] = s.split("@"); return { file: resolve(f.trim()), at: Number(at ?? 0) }; }) : [];
+  const hasAudio = (f) => { try { return JSON.parse(run("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "json", f])).streams.length > 0; } catch { return false; } };
   const first = JSON.parse(run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate", "-of", "json", clips[0]])).streams[0];
   const W = first.width, H = first.height, fps = eval(first.r_frame_rate);
   const durs = clips.map((c) => Number(JSON.parse(run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", c])).format.duration));
@@ -80,16 +146,59 @@ if (args.mode === "trailer") {
     fc += `${prev}${segs[i]}xfade=transition=fade:duration=${xf}:offset=${(acc - xf).toFixed(3)}${out};`;
     acc += segDur[i] - xf; prev = out;
   }
-  fc = fc.replace(/;$/, "");
+  // ---- audio (Phase 7): clip sound (or silence) concatenated with matching crossfades, music under it, narration on top with ducking ----
+  const total = segDur.reduce((a, b) => a + b, 0) - xf * (segDur.length - 1);
+  const withSound = !!music || narr.length > 0 || clips.some(hasAudio);
+  let maps = ["-map", "[vout]"];
+  const audioArgs = withSound ? ["-c:a", "aac", "-b:a", "160k"] : ["-an"];
+  if (withSound) {
+    const aIn = inputs.length / 2;                    // index of the first extra audio input
+    let extraInputs = [];
+    let idx = aIn;
+    // one audio stream per segment: the clip's own track or silence, trimmed to the segment length
+    let ac = `anullsrc=r=48000:cl=stereo[sil];[sil]asplit=${segs.length}` + segs.map((_, i) => `[s${i}]`).join("") + ";";
+    const aSegs = [];
+    segDur.forEach((d, i) => {
+      if (i > 0 && hasAudio(clips[i - 1])) ac += `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${d.toFixed(3)},apad=whole_dur=${d.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;
+      else ac += `[s${i}]atrim=0:${d.toFixed(3)},asetpts=PTS-STARTPTS[a${i}];`;
+      aSegs.push(`[a${i}]`);
+    });
+    let prevA = aSegs[0];
+    for (let i = 1; i < aSegs.length; i++) { const o = i === aSegs.length - 1 ? "[clipmix]" : `[ax${i}]`; ac += `${prevA}${aSegs[i]}acrossfade=d=${xf}:c1=tri:c2=tri${o};`; prevA = o; }
+    if (aSegs.length === 1) ac += `${aSegs[0]}acopy[clipmix];`;
+    let layers = ["[clipmix]"];
+    if (music) {
+      extraInputs.push("-i", music); const mi = idx++;
+      ac += `[${mi}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${total.toFixed(3)},apad=whole_dur=${total.toFixed(3)},volume=${musicDb}dB,afade=t=in:d=0.5,afade=t=out:st=${Math.max(0, total - 2).toFixed(3)}:d=2[music];`;
+      if (narr.length) {
+        // duck the music under narration: sidechain on the summed narration
+        const nIdx = narr.map((n) => { extraInputs.push("-i", n.file); return idx++; });
+        ac += nIdx.map((i, k) => `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,adelay=${Math.round(narr[k].at * 1000)}|${Math.round(narr[k].at * 1000)},apad=whole_dur=${total.toFixed(3)},atrim=0:${total.toFixed(3)}[n${k}];`).join("");
+        ac += nIdx.map((_, k) => `[n${k}]`).join("") + `amix=inputs=${nIdx.length}:normalize=0[narr];[narr]asplit=2[narrA][narrB];`;
+        ac += `[music][narrA]sidechaincompress=threshold=0.02:ratio=8:attack=50:release=600:makeup=1[ducked];`;
+        layers.push("[ducked]", "[narrB]");
+      } else layers.push("[music]");
+    } else if (narr.length) {
+      const nIdx = narr.map((n) => { extraInputs.push("-i", n.file); return idx++; });
+      ac += nIdx.map((i, k) => `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,adelay=${Math.round(narr[k].at * 1000)}|${Math.round(narr[k].at * 1000)},apad=whole_dur=${total.toFixed(3)},atrim=0:${total.toFixed(3)}[n${k}];`).join("");
+      ac += nIdx.map((_, k) => `[n${k}]`).join("") + `amix=inputs=${nIdx.length}:normalize=0[narr];`; layers.push("[narr]");
+    }
+    ac += layers.join("") + `amix=inputs=${layers.length}:normalize=0:dropout_transition=0,alimiter=limit=0.89:level=false[aout]`;
+    inputs.push(...extraInputs);
+    fc += ";" + ac;
+    maps = ["-map", "[vout]", "-map", "[aout]"];
+  }
+  fc = fc.replace(/;;/g, ";").replace(/;$/, "");
   const out = join(outDir, `${name}.mp4`);
-  run("ffmpeg", ["-y", "-v", "error", ...inputs, "-filter_complex", fc, "-map", "[vout]", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", out]);
+  run("ffmpeg", ["-y", "-v", "error", ...inputs, "-filter_complex", fc, ...maps, "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", ...audioArgs, out]);
   run("ffmpeg", ["-y", "-v", "error", "-ss", String(Math.min(1, card / 2)), "-i", out, "-frames:v", "1", join(outDir, `${name}-poster.png`)]);
   copyFileSync(join(outDir, `${name}-poster.png`), join(outDir, "thumb.png"));
-  const total = Number(JSON.parse(run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", out])).format.duration);
-  const sidecar = { forge_version: "0.1.0", created_at: new Date().toISOString(), trailer: { clips: clips.map((c) => basename(c)), title, subtitle, card_s: card, xfade_s: xf, width: W, height: H, fps, duration_s: Number(total.toFixed(3)) },
+  const totalOut = Number(JSON.parse(run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", out])).format.duration);
+  const sidecar = { forge_version: "0.1.0", created_at: new Date().toISOString(), trailer: { clips: clips.map((c) => basename(c)), title, subtitle, card_s: card, xfade_s: xf, width: W, height: H, fps, duration_s: Number(totalOut.toFixed(3)),
+      audio: withSound ? { music: music ? basename(music) : null, music_db: music ? musicDb : null, narration: narr.map((n) => ({ file: basename(n.file), at_s: n.at })), clip_audio: clips.map(hasAudio), codec: "aac" } : null },
     files: { mp4: basename(out), poster: `${name}-poster.png`, thumb: "thumb.png" }, status: "review" };
   writeFileSync(join(outDir, `${name}.sidecar.json`), JSON.stringify(sidecar, null, 1));
-  log(`trailer: ${clips.length} clips + card -> ${basename(out)} ${W}x${H} ${total.toFixed(2)} s (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  log(`trailer: ${clips.length} clips + card -> ${basename(out)} ${W}x${H} ${totalOut.toFixed(2)} s, ${withSound ? "AAC audio (" + [music ? "music" : null, narr.length ? narr.length + " narration" : null, clips.some(hasAudio) ? "clip audio" : null].filter(Boolean).join(", ") + ")" : "no audio"} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   process.exit(0);
 }
 

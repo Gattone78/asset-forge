@@ -32,14 +32,18 @@ onUnmounted(() => clearInterval(timer));
 // ---- new job ----
 const dialog = ref(false);
 const form = reactive({ type: "creature", prompt: "", profile: "meadowbots-flat", seed: "" as string | number, height_m: "" as string | number, count: 4, rig: false, batch: "",
-  kind: "sprite", transparent: true, seamless: false, aspect: "16:9", duration_s: 5, init_image: "", fast: true });
+  kind: "sprite", transparent: true, seamless: false, aspect: "16:9", duration_s: 5, init_image: "", fast: true,
+  audio_duration: "" as string | number, audio_count: 4, loop: false, bpm: "" as string | number, key: "", voice: "af_heart", speed: 1.0, clip: "" });
+const isAudio = computed(() => ["sfx", "music", "speech", "foley"].includes(form.type));
 watch(() => form.kind, (k) => { form.transparent = k === "sprite"; form.seamless = k !== "sprite"; });
 const submitting = ref(false);
 async function submit() {
-  if (!form.prompt.trim()) return;
+  if (!form.prompt.trim() && form.type !== "foley") return;
   submitting.value = true;
   try {
     const job = await api.create({ type: form.type, prompt: form.prompt.trim(), profile: form.profile, count: Number(form.count) || 4,
+      audio: isAudio.value ? { duration_s: form.audio_duration === "" ? undefined : Number(form.audio_duration), count: Number(form.audio_count) || 4, loop: form.loop,
+        bpm: form.bpm === "" ? undefined : Number(form.bpm), key: form.key.trim() || undefined, voice: form.voice.trim() || undefined, speed: Number(form.speed) || 1, clip: form.clip.trim() || undefined } : undefined,
       seed: form.seed === "" ? undefined : Number(form.seed), height_m: form.height_m === "" ? undefined : Number(form.height_m), rig: form.rig,
       batch: form.batch.trim() || undefined, image: form.type === "image" ? { kind: form.kind, transparent: form.transparent, seamless: form.seamless } : undefined,
       video: form.type === "video" ? { aspect: form.aspect, duration_s: Number(form.duration_s) || 5, init_image: form.init_image.trim() || undefined, fast: form.fast } : undefined } as any);
@@ -100,7 +104,28 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
     <v-dialog v-model="dialog" max-width="560" :fullscreen="$vuetify.display.xs">
       <v-card title="New job">
         <v-card-text>
-          <v-select v-model="form.type" :items="['creature', 'prop', 'plant', 'image', 'video']" label="Type" density="comfortable" />
+          <v-select v-model="form.type" :items="['creature', 'prop', 'plant', 'image', 'video', 'sfx', 'music', 'speech', 'foley']" label="Type" density="comfortable" />
+          <template v-if="form.type === 'sfx'">
+            <div class="d-flex flex-wrap ga-3 align-center mb-2">
+              <v-text-field v-model="form.audio_duration" label="Seconds" type="number" min="0.5" max="30" placeholder="4" density="compact" hide-details style="max-width: 110px" />
+              <v-text-field v-model="form.audio_count" label="Variations" type="number" min="1" max="8" density="compact" hide-details style="max-width: 110px" />
+            </div>
+          </template>
+          <template v-if="form.type === 'music'">
+            <div class="d-flex flex-wrap ga-3 align-center mb-2">
+              <v-text-field v-model="form.audio_duration" label="Seconds" type="number" min="5" max="300" placeholder="30" density="compact" hide-details style="max-width: 110px" />
+              <v-text-field v-model="form.bpm" label="BPM" type="number" placeholder="profile" density="compact" hide-details style="max-width: 100px" />
+              <v-text-field v-model="form.key" label="Key" placeholder="C major" density="compact" hide-details style="max-width: 120px" />
+              <v-switch v-model="form.loop" label="seamless loop" color="primary" density="compact" hide-details />
+            </div>
+          </template>
+          <template v-if="form.type === 'speech'">
+            <div class="d-flex flex-wrap ga-3 align-center mb-2">
+              <v-text-field v-model="form.voice" label="Voice (Kokoro id)" density="compact" hide-details style="max-width: 200px" hint="af_heart, am_michael, bf_emma, bm_george …" />
+              <v-text-field v-model="form.speed" label="Speed" type="number" step="0.05" min="0.5" max="2" density="compact" hide-details style="max-width: 100px" />
+            </div>
+          </template>
+          <v-text-field v-if="form.type === 'foley'" v-model="form.clip" label="Video job id (finished)" density="comfortable" hint="MMAudio generates sound synchronised to that clip; the prompt is optional" persistent-hint class="mb-2" />
           <template v-if="form.type === 'video'">
             <div class="d-flex flex-wrap ga-3 align-center mb-2">
               <v-btn-toggle v-model="form.aspect" mandatory density="comfortable" variant="outlined" divided><v-btn value="16:9">16:9</v-btn><v-btn value="9:16">9:16</v-btn></v-btn-toggle>
@@ -109,7 +134,7 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
             </div>
             <v-text-field v-model="form.init_image" label="Init image (optional): job id, or job id/out/thumb.png" density="comfortable" hint="image-to-video from an approved asset's thumbnail" persistent-hint class="mb-2" />
           </template>
-          <v-textarea v-model="form.prompt" label="Prompt" rows="3" auto-grow placeholder="a round friendly garden robot with big eyes" autofocus />
+          <v-textarea v-model="form.prompt" :label="form.type === 'speech' ? 'Text to speak' : form.type === 'foley' ? 'Sound hint (optional)' : 'Prompt'" rows="3" auto-grow placeholder="a round friendly garden robot with big eyes" autofocus />
           <template v-if="form.type === 'image'">
             <v-btn-toggle v-model="form.kind" mandatory density="comfortable" variant="outlined" divided class="mb-3">
               <v-btn value="sprite">sprite</v-btn><v-btn value="texture">texture</v-btn><v-btn value="tile">tile</v-btn>
@@ -122,12 +147,12 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
             <v-col cols="4"><v-text-field v-model="form.height_m" label="Height (m)" type="number" step="0.05" density="comfortable" hint="blank = profile" persistent-hint /></v-col>
             <v-col cols="4"><v-text-field v-model="form.count" label="Candidates" type="number" min="1" max="8" density="comfortable" /></v-col>
           </v-row>
-          <v-switch v-if="form.type !== 'image' && form.type !== 'video'" v-model="form.rig" label="Auto-rig (creatures only, adds ~30 s)" color="primary" :disabled="form.type !== 'creature'" hide-details />
+          <v-switch v-if="form.type !== 'image' && form.type !== 'video' && !isAudio" v-model="form.rig" label="Auto-rig (creatures only, adds ~30 s)" color="primary" :disabled="form.type !== 'creature'" hide-details />
           <v-text-field v-model="form.batch" label="Batch label (optional)" density="comfortable" hint="jobs with the same label show as a set" persistent-hint class="mt-2" />
         </v-card-text>
         <v-card-actions>
           <v-spacer /><v-btn @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" variant="flat" :loading="submitting" :disabled="!form.prompt.trim()" @click="submit">Create</v-btn>
+          <v-btn color="primary" variant="flat" :loading="submitting" :disabled="!form.prompt.trim() && form.type !== 'foley'" @click="submit">Create</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

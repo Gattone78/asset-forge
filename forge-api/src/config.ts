@@ -15,6 +15,7 @@ export const config = {
   minFreeVramGb: Number(env("FORGE_MIN_FREE_VRAM_GB", "80")),
   nerdctl: env("FORGE_NERDCTL", "sudo nerdctl").split(" "),
   svcPostImage: env("FORGE_SVC_POST_IMAGE", "forge/svc-post:0.1.0"),
+  svcAudioImage: env("FORGE_SVC_AUDIO_IMAGE", "forge/svc-audio:0.1.0"),
   version: "0.1.0",
 };
 export const paths = {

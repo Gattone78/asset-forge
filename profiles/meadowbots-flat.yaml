@@ -30,6 +30,18 @@ video:
   height_9x16: 832
   fast: true              # lightx2v 4-step LoRAs (cfg 1); false = 20 steps, cfg 3.5
   style_prompt: "cute rounded 3D toy look, soft pastel colors, simple shapes, clean, bright even lighting, smooth gentle motion"
+audio:
+  sample_rate: 44100
+  sfx_channels: mono        # runtime SFX are mono OGG; music and foley stay stereo
+  sfx_duration_s: 4
+  sfx_style: "cute toy-like, soft, clean, no music, no voice"
+  music_duration_s: 30
+  music_style: "cheerful children's game soundtrack, ukulele, glockenspiel, soft synth pads, light percussion, playful, warm, simple melody"
+  music_bpm: 110
+  music_key: "C major"
+  voice: af_heart           # Kokoro voice id (models/kokoro/voices)
+  voice_speed: 1.0
+  music_db: -14             # music level under narration in trailers
 rig:
   default: false          # jobs opt in with --rig (creatures only; props/plants get named pivots)
   template: articulationxl # UniRig skeleton template: articulationxl (any creature) | mixamo (humanoid)
