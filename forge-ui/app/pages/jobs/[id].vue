@@ -29,12 +29,16 @@ const sidecar = computed(() => assets.value?.sidecar);
 const logTail = computed(() => log.value.split("\n").filter(Boolean).slice(-40).join("\n"));
 const picked = computed(() => candidates.value?.picked as string | undefined);
 const isImage = computed(() => job.value?.request.type === "image");
-const isVideo = computed(() => ["video", "trailer", "foley"].includes(job.value?.request.type ?? ""));
+const isVideo = computed(() => ["video", "trailer", "foley", "promo"].includes(job.value?.request.type ?? ""));
+const isPromo = computed(() => job.value?.request.type === "promo");
+const styledStill = computed(() => outFiles.value.find((f) => f.path === "out/styled.png")?.path);
 const isAudio = computed(() => ["sfx", "music", "speech", "foley"].includes(job.value?.request.type ?? ""));
 const audioEntries = computed(() => (sidecar.value?.audios ?? (sidecar.value?.audio?.kind === "speech" ? [{ index: 1, ...sidecar.value.audio, ...sidecar.value.files }] : [])) as any[]);
-const videoMp4 = computed(() => outFiles.value.find((f) => f.path.endsWith(".mp4"))?.path);
-const videoWebm = computed(() => outFiles.value.find((f) => f.path.endsWith(".webm"))?.path);
-const videoPoster = computed(() => outFiles.value.find((f) => f.path.endsWith("-poster.png"))?.path);
+// The final MP4 is the one whose name is not an intermediate (promo jobs also keep "<name>-clip.mp4" and its poster).
+const isFinal = (p: string) => !/-clip\.(mp4|webm)$|-clip-poster\.png$/.test(p);
+const videoMp4 = computed(() => outFiles.value.find((f) => f.path.endsWith(".mp4") && isFinal(f.path))?.path ?? outFiles.value.find((f) => f.path.endsWith(".mp4"))?.path);
+const videoWebm = computed(() => job.value?.request.type === "promo" ? undefined : outFiles.value.find((f) => f.path.endsWith(".webm") && isFinal(f.path))?.path);
+const videoPoster = computed(() => outFiles.value.find((f) => f.path.endsWith("-poster.png") && isFinal(f.path))?.path);
 const imageEntries = computed(() => (sidecar.value?.images ?? []) as any[]);
 
 async function refresh() {
@@ -98,6 +102,13 @@ const stage = (name: string) => sidecar.value?.stages?.find((s: any) => s.stage 
           <v-card-text v-if="sidecar?.video || sidecar?.trailer" class="text-caption py-2">
             <span v-if="sidecar.video">{{ sidecar.video.width }}×{{ sidecar.video.height }} · {{ sidecar.video.fps }} fps · {{ sidecar.video.duration_s }} s · {{ sidecar.video.frames }} frames<span v-if="stage('video')"> · {{ stage('video').mode }} · seed {{ stage('video').seed }} · {{ stage('video').steps }} steps · {{ stage('video').seconds }} s on the GPU</span><span :class="sidecar.video.non_blank ? 'text-green' : 'text-red'"> · {{ sidecar.video.non_blank ? 'non-blank, has motion' : 'BLANK OR STATIC' }}</span></span>
             <span v-else>trailer · {{ sidecar.trailer.clips.length }} clips · {{ sidecar.trailer.width }}×{{ sidecar.trailer.height }} · {{ sidecar.trailer.duration_s }} s</span>
+          </v-card-text>
+        </v-card>
+        <v-card v-if="isPromo && sidecar?.promo" class="mb-3" title="Photo → styled still">
+          <v-card-text class="d-flex ga-3 flex-wrap">
+            <div><div class="text-caption text-medium-emphasis mb-1">uploaded photo</div><img :src="api.uploadUrl(sidecar.promo.photo)" style="max-height: 180px; border-radius: 8px" /></div>
+            <div v-if="styledStill"><div class="text-caption text-medium-emphasis mb-1">style: {{ sidecar.promo.style }}</div><img :src="api.assetUrl(job.id, styledStill)" style="max-height: 180px; border-radius: 8px" /></div>
+            <div class="text-caption align-self-end">{{ [sidecar.promo.foley ? 'foley' : null, sidecar.promo.narration ? 'narration' : null, sidecar.promo.music ? 'music' : null].filter(Boolean).join(' + ') || 'no sound' }}</div>
           </v-card-text>
         </v-card>
         <v-card v-if="isAudio && audioEntries.length" class="mb-3" :title="sidecar.audio?.kind === 'speech' ? 'Narration' : sidecar.audio?.kind === 'music' ? 'Music' : sidecar.audio?.kind === 'foley' ? 'Foley track' : 'Sound effects'">

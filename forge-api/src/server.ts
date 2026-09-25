@@ -1,8 +1,9 @@
 // forge-api: REST per req §6. Plain Fastify, no plugins beyond what ships with it.
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
-import { randomUUID } from "node:crypto";
-import { createReadStream, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import sharp from "sharp";
 import { join, normalize, resolve } from "node:path";
 import { config, paths } from "./config.ts";
 import * as comfy from "./comfy.ts";
@@ -28,7 +29,7 @@ app.post("/jobs", async (req, reply) => {
   if ((!b.prompt && !["trailer", "foley"].includes(b.type)) || !b.profile) return reply.code(400).send({ error: "prompt and profile are required" });
   let profile; try { profile = loadProfile(b.profile); } catch { return reply.code(400).send({ error: `unknown profile ${b.profile}` }); }
   const type = (b.type ?? "creature") as JobRequest["type"];
-  if (!["creature", "prop", "plant", "image", "video", "trailer", "sfx", "music", "speech", "foley"].includes(type)) return reply.code(400).send({ error: "bad type" });
+  if (!["creature", "prop", "plant", "image", "video", "trailer", "sfx", "music", "speech", "foley", "promo", "model"].includes(type)) return reply.code(400).send({ error: "bad type" });
   const finished = (jid: string, types: string[]) => { const j = getJob(jid); return j && types.includes(j.request.type) && ["review", "approved"].includes(j.status) ? j : null; };
   if (type === "trailer") {
     const clips = ((b.trailer?.clips ?? []) as string[]).map(String).filter(Boolean);
@@ -38,6 +39,17 @@ app.post("/jobs", async (req, reply) => {
     for (const n of (b.trailer?.narration ?? []) as any[]) if (!n?.speech || !finished(String(n.speech), ["speech"])) return reply.code(400).send({ error: `narration ${n?.speech} is not a finished speech job` });
   }
   if (type === "foley" && !finished(String(b.audio?.clip ?? ""), ["video"])) return reply.code(400).send({ error: "foley needs audio.clip: a finished video job id" });
+  // Phase 8: photo-driven jobs need existing uploads and a known style
+  const uploadOk = (ref: string) => { const id = String(ref).replace(/^upload:/, ""); return /^[0-9a-f-]{36}$/.test(id) && existsSync(join(paths.uploads, `${id}.json`)); };
+  if (type === "promo") {
+    if (!b.promo?.photo || !uploadOk(b.promo.photo)) return reply.code(400).send({ error: "promo needs promo.photo: an upload id (POST /uploads)" });
+    if (!b.promo?.style) return reply.code(400).send({ error: "promo needs promo.style (see the profile's styles)" });
+  }
+  if (type === "model") {
+    const photos = ((b.model?.photos ?? []) as string[]).map(String).filter(Boolean);
+    if (!photos.length || !photos.every(uploadOk)) return reply.code(400).send({ error: "model needs model.photos: upload ids (POST /uploads)" });
+    if (!b.model?.style) return reply.code(400).send({ error: "model needs model.style (see the profile's styles)" });
+  }
   const au = (b.audio ?? {}) as NonNullable<JobRequest["audio"]>;
   const vid = (b.video ?? {}) as NonNullable<JobRequest["video"]>;
   const img = (b.image ?? {}) as NonNullable<JobRequest["image"]>;
@@ -61,8 +73,12 @@ app.post("/jobs", async (req, reply) => {
       sample_rate: au.sample_rate ? Number(au.sample_rate) : undefined, channels: au.channels === "stereo" ? "stereo" : au.channels === "mono" ? "mono" : undefined } : undefined,
   };
   if (type === "foley") jr.prompt = jr.prompt || "";
+  if (type === "promo") jr.promo = { photo: String(b.promo.photo).replace(/^upload:/, ""), style: String(b.promo.style), duration_s: b.promo.duration_s ? Math.min(10, Math.max(1, Number(b.promo.duration_s))) : undefined,
+    aspect: b.promo.aspect === "9:16" ? "9:16" : "16:9", script: b.promo.script ? String(b.promo.script) : undefined, narration_at_s: b.promo.narration_at_s !== undefined ? Number(b.promo.narration_at_s) : undefined,
+    music: b.promo.music !== false, music_prompt: b.promo.music_prompt ? String(b.promo.music_prompt) : undefined, foley: b.promo.foley !== false, title: b.promo.title ? String(b.promo.title) : undefined };
+  if (type === "model") jr.model = { photos: (b.model.photos as string[]).map((p) => String(p).replace(/^upload:/, "")), style: String(b.model.style), humanoid: !!b.model.humanoid };
   if (type === "trailer") jr.prompt = jr.prompt || `trailer: ${jr.trailer!.title ?? jr.trailer!.clips.length + " clips"}`;
-  if (jr.rig && type !== "creature") return reply.code(400).send({ error: "rigging applies to creatures only (props and plants get named pivots, req §1)" });
+  if (jr.rig && type !== "creature" && type !== "model") return reply.code(400).send({ error: "rigging applies to creatures and photo models only (props and plants get named pivots, req §1)" });
   if (jr.views === "multi") return reply.code(501).send({ error: "views=multi is not effective: ComfyUI core's Trellis2Conditioning treats an image batch as separate objects, so the result equals the front-only run (Phase 2 bake-off, docs/phase-2.md). Multi-view needs the Pixal3D multi-view model; not wired yet." });
   const job = insertJob(randomUUID(), jr);
   return reply.code(201).send(job);
@@ -99,6 +115,41 @@ app.get("/assets/:job/*", async (req, reply) => {
   const type = f.endsWith(".glb") ? "model/gltf-binary" : f.endsWith(".png") ? "image/png" : f.endsWith(".json") ? "application/json" : f.endsWith(".fbx") ? "application/octet-stream" : "application/octet-stream";
   return reply.type(type).header("content-length", statSync(f).size).send(createReadStream(f));
 });
+// ---- uploads (Phase 8): raw image body, no multipart dependency. POST /uploads?name=photo.jpg with the file as the body. ----
+app.addContentTypeParser(["image/png", "image/jpeg", "image/webp", "application/octet-stream"], { parseAs: "buffer", bodyLimit: 20 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+app.post("/uploads", async (req, reply) => {
+  const body = req.body as Buffer;
+  if (!Buffer.isBuffer(body) || body.length < 100) return reply.code(400).send({ error: "send the image file as the request body (image/png, image/jpeg or image/webp)" });
+  mkdirSync(paths.uploads, { recursive: true });
+  let meta: sharp.Metadata;
+  try { meta = await sharp(body).metadata(); } catch { return reply.code(400).send({ error: "not an image" }); }
+  if (!meta.width || !meta.height || !["png", "jpeg", "webp"].includes(meta.format ?? "")) return reply.code(400).send({ error: "unsupported image format: " + meta.format });
+  const id = randomUUID();
+  // Stored as PNG with the EXIF orientation applied, so every later stage sees the photo the way the camera showed it.
+  const png = await sharp(body).rotate().png().toBuffer();
+  const info = await sharp(png).metadata();
+  const rec = { id, name: String((req.query as any).name ?? "upload").slice(0, 200), bytes: png.length, original_bytes: body.length, original_format: meta.format,
+    width: info.width, height: info.height, sha256: createHash("sha256").update(body).digest("hex"), uploaded_at: new Date().toISOString(), file: `${id}.png` };
+  writeFileSync(join(paths.uploads, `${id}.png`), png);
+  writeFileSync(join(paths.uploads, `${id}.json`), JSON.stringify(rec, null, 1));
+  return reply.code(201).send(rec);
+});
+app.get("/uploads", async () => existsSync(paths.uploads) ? readdirSync(paths.uploads).filter((f) => f.endsWith(".json")).map((f) => JSON.parse(readFileSync(join(paths.uploads, f), "utf8"))).sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at)) : []);
+app.get("/uploads/:id", async (req, reply) => {
+  const id = String((req.params as any).id).replace(/[^0-9a-f-]/g, "");
+  const f = join(paths.uploads, `${id}.png`);
+  if (!existsSync(f)) return reply.code(404).send({ error: "no such upload" });
+  return reply.type("image/png").header("content-length", statSync(f).size).send(createReadStream(f));
+});
+app.delete("/uploads/:id", async (req, reply) => {
+  const id = String((req.params as any).id).replace(/[^0-9a-f-]/g, "");
+  if (!existsSync(join(paths.uploads, `${id}.json`))) return reply.code(404).send({ error: "no such upload" });
+  const users = listJobs({ limit: 100000 }).filter((j) => JSON.stringify(j.request).includes(id));
+  if (users.length) return reply.code(409).send({ error: `upload is referenced by ${users.length} job(s)`, jobs: users.map((j) => j.id) });
+  rmSync(join(paths.uploads, `${id}.png`), { force: true }); rmSync(join(paths.uploads, `${id}.json`), { force: true });
+  return { ok: true };
+});
+
 app.get("/viewer", async (req, reply) => {
   const q = req.query as Record<string, string>;
   const job = getJob(q.job ?? "");

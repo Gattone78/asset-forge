@@ -6,7 +6,7 @@ import { paths } from "./config.ts";
 
 export type JobStatus = "queued" | "running" | "review" | "approved" | "rejected" | "failed";
 export interface JobRequest {
-  type: "creature" | "prop" | "plant" | "image" | "video" | "trailer" | "sfx" | "music" | "speech" | "foley";
+  type: "creature" | "prop" | "plant" | "image" | "video" | "trailer" | "sfx" | "music" | "speech" | "foley" | "promo" | "model";
   prompt: string;
   profile: string;
   seed: number;
@@ -21,6 +21,9 @@ export interface JobRequest {
   video?: { duration_s?: number; fps?: number; aspect?: "16:9" | "9:16"; init_image?: string; fast?: boolean };
   trailer?: { clips: string[]; title?: string; subtitle?: string; xfade_s?: number; card_s?: number; music?: string; music_db?: number; narration?: { speech: string; at_s: number }[] };
   audio?: { duration_s?: number; count?: number; loop?: boolean; bpm?: number; key?: string; voice?: string; speed?: number; clip?: string; sample_rate?: number; channels?: "mono" | "stereo" };
+  /** Phase 8: photo-driven jobs. `photo`/`photos` are upload ids ("upload:<id>" or bare id); `style` is a key of the profile's `styles:` block. */
+  promo?: { photo: string; style: string; duration_s?: number; aspect?: "16:9" | "9:16"; script?: string; narration_at_s?: number; music?: boolean; music_prompt?: string; foley?: boolean; title?: string };
+  model?: { photos: string[]; style: string; humanoid?: boolean };
 }
 export interface Job {
   id: string;

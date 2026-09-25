@@ -30,6 +30,33 @@ video:
   height_9x16: 832
   fast: true              # lightx2v 4-step LoRAs (cfg 1); false = 20 steps, cfg 3.5
   style_prompt: "cute rounded 3D toy look, soft pastel colors, simple shapes, clean, bright even lighting, smooth gentle motion"
+# Phase 8: visual styles for photo-driven jobs (promo, model). `restyle` is the Qwen-Image-Edit instruction (empty = no restyle),
+# `video` / `three_d` are prompt suffixes for the clip / the 3D reference, `music` / `sfx` hint the audio prompts.
+styles:
+  realistic:
+    restyle: ""
+    video: "photorealistic, natural light, real camera, subtle motion"
+    three_d: "photorealistic, accurate proportions"
+    music: "gentle acoustic, warm, documentary"
+    sfx: "realistic, natural ambience"
+  pixar:
+    restyle: "Turn this into a 3D animated feature film character: soft subsurface skin, big expressive eyes, rounded shapes, warm cinematic lighting, keep the same person, pose and framing"
+    video: "3D animated feature film look, soft lighting, expressive, smooth gentle motion"
+    three_d: "3D animated film character, rounded shapes, clean silhouette"
+    music: "whimsical orchestral, playful, warm, family film"
+    sfx: "cartoonish, soft, playful"
+  2d:
+    restyle: "Redraw this as a flat 2D cartoon: clean line art, cel shading, simple shapes, bright flat colors, keep the same person, pose and framing"
+    video: "flat 2D cartoon animation, cel shaded, clean lines, simple motion"
+    three_d: "flat-shaded cartoon character, simple shapes"
+    music: "bright chiptune-pop, playful, upbeat"
+    sfx: "cartoon, bouncy, playful"
+  toy:
+    restyle: "Turn this into a cute rounded low-detail 3D toy figure, soft pastel colors, simple shapes, friendly, plain background, keep the same pose and framing"
+    video: "cute rounded 3D toy look, soft pastel colors, simple shapes, clean, bright even lighting, smooth gentle motion"
+    three_d: "cute rounded low-detail 3D toy, soft pastel colors, simple shapes, friendly, clean silhouette"
+    music: "cheerful children's game soundtrack, ukulele, glockenspiel, playful"
+    sfx: "cute toy-like, soft, clean"
 audio:
   sample_rate: 44100
   sfx_channels: mono        # runtime SFX are mono OGG; music and foley stay stereo

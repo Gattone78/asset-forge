@@ -146,3 +146,10 @@ sr0     1024M rom
 - **Images:** `forge/comfyui:0.1.1` (9.4 GB: 0.1.0 + `build-essential` + ComfyUI-MMAudio @ `8eaeb72e` and its pip deps; `compose.yaml` points at it; **remove the old container once after any image bump**, forge-api now starts comfyui with `--force-recreate`), `forge/svc-audio:0.1.0` (2.1 GB, Python 3.12 + CPU torch 2.8 + kokoro 0.9.4 + spaCy `en_core_web_sm` + espeak-ng + ffmpeg, runs as uid 1000, `FORGE_SVC_AUDIO_IMAGE`), `forge/svc-post:0.1.0` rebuilt (audio mode, trailer audio). `forge/comfyui:0.1.0` was removed after the Phase 7 acceptance (root disk 62 % used).
 - **Measured:** ACE-Step 1.5 peak 10.4 GB VRAM (12 s cold / 4 s warm for 30 s); SA3 Small-SFX 2.6 GB (4.5 s for a 4 × 4 s batch); MMAudio **42.6 GB** peak (14 s per 5 s clip); Kokoro 4–6 s per sentence on the CPU. All within `FORGE_MIN_FREE_VRAM_GB=80`.
 - **Torch 2.14 native Triton kernels** need a C compiler in the container at first use; without it the first ACE-Step run fails with `Failed to find C compiler`.
+
+## Phase 8 additions (2026-09-25)
+
+- **Restyle model on disk** (30.2 GB, `/srv/forge/models/download-qwen-edit.sh`, ungated, Apache-2.0): `diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors` (20.5 GB), `text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors` (9.4 GB), `vae/qwen_image_vae.safetensors`. `/srv/forge/models` ≈ 164 GB; data disk 69 % used. ComfyUI core nodes only — no image change.
+- **Uploads** live in `/srv/forge/uploads/<uuid>.png` + `.json` (EXIF-rotated PNG copies of what was sent; ≤ 20 MB per file). Backup set is now `jobs/`, `db/`, `uploads/`.
+- **Measured:** Qwen-Image-Edit 2511 at 40 steps: **82 s cold / 68–86 s warm** per restyle, **peak 30 GB** VRAM. A promo job (restyle + Wan I2V + MMAudio + Kokoro + ACE-Step + mix) takes ~165 s end to end; a `model` job adds TRELLIS.2 (50 s) + post + rig to a ~85 s restyle.
+- **Restyle speed-up available, not installed:** the Comfy-Org 2511 template's Lightning 4-step LoRA (`Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors`) would cut a restyle to ~10 s.

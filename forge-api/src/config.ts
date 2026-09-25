@@ -23,5 +23,6 @@ export const paths = {
   workflows: resolve(config.repo, "workflows"),
   profiles: resolve(config.repo, "profiles"),
   jobs: resolve(config.data, "jobs"),
+  uploads: resolve(config.data, "uploads"),
   db: resolve(config.data, "db", "forge.sqlite"),
 };

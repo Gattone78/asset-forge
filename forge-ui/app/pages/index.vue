@@ -35,6 +35,16 @@ const form = reactive({ type: "creature", prompt: "", profile: "meadowbots-flat"
   kind: "sprite", transparent: true, seamless: false, aspect: "16:9", duration_s: 5, init_image: "", fast: true,
   audio_duration: "" as string | number, audio_count: 4, loop: false, bpm: "" as string | number, key: "", voice: "af_heart", speed: 1.0, clip: "" });
 const isAudio = computed(() => ["sfx", "music", "speech", "foley"].includes(form.type));
+// Phase 8: photo-driven jobs pick from the uploads list (Uploads page adds photos).
+const isPhoto = computed(() => form.type === "promo" || form.type === "model");
+const uploads = ref<Upload[]>([]);
+const photoForm = reactive({ photo: "" as string, photos: [] as string[], style: "pixar", script: "", narration_at: 1, music: true, foley: true, music_prompt: "", title: "", duration_s: 5, aspect: "16:9", humanoid: false });
+const styles = ["realistic", "pixar", "2d", "toy"];
+watch(dialog, async (open) => { if (open) { try { uploads.value = await api.uploads(); } catch {} } });
+async function addPhoto(files: File | File[] | null) {
+  const list = (Array.isArray(files) ? files : files ? [files] : []).filter(Boolean);
+  for (const f of list) { try { const u = await api.upload(f); uploads.value.unshift(u); if (form.type === "promo") photoForm.photo = u.id; else photoForm.photos.push(u.id); } catch (e: any) { error.value = e?.data?.error ?? String(e); } }
+}
 watch(() => form.kind, (k) => { form.transparent = k === "sprite"; form.seamless = k !== "sprite"; });
 const submitting = ref(false);
 async function submit() {
@@ -42,6 +52,9 @@ async function submit() {
   submitting.value = true;
   try {
     const job = await api.create({ type: form.type, prompt: form.prompt.trim(), profile: form.profile, count: Number(form.count) || 4,
+      promo: form.type === "promo" ? { photo: photoForm.photo, style: photoForm.style, duration_s: Number(photoForm.duration_s) || 5, aspect: photoForm.aspect, script: photoForm.script.trim() || undefined,
+        narration_at_s: Number(photoForm.narration_at) || 1, music: photoForm.music, foley: photoForm.foley, music_prompt: photoForm.music_prompt.trim() || undefined, title: photoForm.title.trim() || undefined } : undefined,
+      model: form.type === "model" ? { photos: photoForm.photos, style: photoForm.style, humanoid: photoForm.humanoid } : undefined,
       audio: isAudio.value ? { duration_s: form.audio_duration === "" ? undefined : Number(form.audio_duration), count: Number(form.audio_count) || 4, loop: form.loop,
         bpm: form.bpm === "" ? undefined : Number(form.bpm), key: form.key.trim() || undefined, voice: form.voice.trim() || undefined, speed: Number(form.speed) || 1, clip: form.clip.trim() || undefined } : undefined,
       seed: form.seed === "" ? undefined : Number(form.seed), height_m: form.height_m === "" ? undefined : Number(form.height_m), rig: form.rig,
@@ -104,7 +117,31 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
     <v-dialog v-model="dialog" max-width="560" :fullscreen="$vuetify.display.xs">
       <v-card title="New job">
         <v-card-text>
-          <v-select v-model="form.type" :items="['creature', 'prop', 'plant', 'image', 'video', 'sfx', 'music', 'speech', 'foley']" label="Type" density="comfortable" />
+          <v-select v-model="form.type" :items="['creature', 'prop', 'plant', 'image', 'video', 'sfx', 'music', 'speech', 'foley', 'promo', 'model']" label="Type" density="comfortable" />
+          <template v-if="isPhoto">
+            <div class="d-flex flex-wrap ga-3 align-center mb-2">
+              <v-select v-model="photoForm.style" :items="styles" label="Style" density="compact" hide-details style="max-width: 160px" />
+              <v-file-input label="Add photo" accept="image/png,image/jpeg,image/webp" :multiple="form.type === 'model'" density="compact" hide-details prepend-icon="mdi-camera" style="max-width: 260px" @update:model-value="addPhoto" />
+            </div>
+            <div v-if="uploads.length" class="d-flex flex-wrap ga-2 mb-2">
+              <v-avatar v-for="u in uploads.slice(0, 24)" :key="u.id" size="56" rounded="lg" :style="{ outline: (form.type === 'promo' ? photoForm.photo === u.id : photoForm.photos.includes(u.id)) ? '3px solid #2e7d32' : '1px solid #ccc', cursor: 'pointer' }" :title="u.name"
+                @click="form.type === 'promo' ? (photoForm.photo = u.id) : (photoForm.photos.includes(u.id) ? photoForm.photos.splice(photoForm.photos.indexOf(u.id), 1) : photoForm.photos.push(u.id))">
+                <v-img :src="api.uploadUrl(u.id)" cover />
+              </v-avatar>
+            </div>
+            <div v-else class="text-caption text-medium-emphasis mb-2">No uploads yet: add a photo above (or on the Uploads page).</div>
+            <template v-if="form.type === 'promo'">
+              <v-text-field v-model="photoForm.script" label="Narration script (optional)" density="comfortable" hint="spoken by Kokoro over the clip" persistent-hint class="mb-2" />
+              <div class="d-flex flex-wrap ga-3 align-center mb-2">
+                <v-btn-toggle v-model="photoForm.aspect" mandatory density="comfortable" variant="outlined" divided><v-btn value="16:9">16:9</v-btn><v-btn value="9:16">9:16</v-btn></v-btn-toggle>
+                <v-text-field v-model="photoForm.duration_s" label="Seconds" type="number" min="1" max="10" density="compact" hide-details style="max-width: 100px" />
+                <v-switch v-model="photoForm.music" label="music" color="primary" density="compact" hide-details />
+                <v-switch v-model="photoForm.foley" label="sound effects" color="primary" density="compact" hide-details />
+              </div>
+              <v-text-field v-model="photoForm.title" label="Title card (optional)" density="compact" hide-details class="mb-2" />
+            </template>
+            <v-switch v-if="form.type === 'model'" v-model="photoForm.humanoid" label="the subject is a person (humanoid skeleton)" color="primary" density="compact" hide-details class="mb-2" />
+          </template>
           <template v-if="form.type === 'sfx'">
             <div class="d-flex flex-wrap ga-3 align-center mb-2">
               <v-text-field v-model="form.audio_duration" label="Seconds" type="number" min="0.5" max="30" placeholder="4" density="compact" hide-details style="max-width: 110px" />
@@ -147,12 +184,12 @@ const thumb = (j: Job) => j.status === "review" || j.status === "approved" || j.
             <v-col cols="4"><v-text-field v-model="form.height_m" label="Height (m)" type="number" step="0.05" density="comfortable" hint="blank = profile" persistent-hint /></v-col>
             <v-col cols="4"><v-text-field v-model="form.count" label="Candidates" type="number" min="1" max="8" density="comfortable" /></v-col>
           </v-row>
-          <v-switch v-if="form.type !== 'image' && form.type !== 'video' && !isAudio" v-model="form.rig" label="Auto-rig (creatures only, adds ~30 s)" color="primary" :disabled="form.type !== 'creature'" hide-details />
+          <v-switch v-if="form.type !== 'image' && form.type !== 'video' && !isAudio && form.type !== 'promo'" v-model="form.rig" :label="form.type === 'model' ? 'Auto-rig the model (UniRig)' : 'Auto-rig (creatures only, adds ~30 s)'" color="primary" :disabled="form.type !== 'creature' && form.type !== 'model'" hide-details />
           <v-text-field v-model="form.batch" label="Batch label (optional)" density="comfortable" hint="jobs with the same label show as a set" persistent-hint class="mt-2" />
         </v-card-text>
         <v-card-actions>
           <v-spacer /><v-btn @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" variant="flat" :loading="submitting" :disabled="!form.prompt.trim() && form.type !== 'foley'" @click="submit">Create</v-btn>
+          <v-btn color="primary" variant="flat" :loading="submitting" :disabled="(!form.prompt.trim() && form.type !== 'foley') || (form.type === 'promo' && !photoForm.photo) || (form.type === 'model' && !photoForm.photos.length)" @click="submit">Create</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
